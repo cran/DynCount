@@ -1,0 +1,24 @@
+citHeader("To cite DynCount in publications, please cite the paper that ",
+          "develops the methodology:")
+
+bibentry(
+  bibtype  = "Article",
+  title    = "Dynamic Count Models with Flexible Innovation Processes for Irregular Maritime Migration",
+  author   = c(person("Gregor", "Zens"),
+               person("Jakub", "Bijak")),
+  journal  = "The Annals of Applied Statistics",
+  year     = "2026",
+  volume   = "20",
+  number   = "2",
+  pages    = "1671--1690",
+  doi      = "10.1214/26-AOAS2171",
+  header   = "Methodology paper:",
+  textVersion = paste(
+    "Zens, G. and Bijak, J. (2026).",
+    "Dynamic Count Models with Flexible Innovation Processes for Irregular",
+    "Maritime Migration. The Annals of Applied Statistics, 20(2), 1671-1690.",
+    "doi:10.1214/26-AOAS2171"
+  )
+)
+
+citFooter("A preprint is available at <https://arxiv.org/abs/2508.18716>.")

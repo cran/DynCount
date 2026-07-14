@@ -1,0 +1,289 @@
+---
+title: "Dynamic Models for Poisson and Binomial Time Series"
+author: "Gregor Zens"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Dynamic Models for Poisson and Binomial Time Series}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  fig.width = 7,
+  fig.height = 4.2
+)
+set.seed(1)
+library(DynCount)
+# Short MCMC runs keep the vignette fast to build; use longer runs in practice.
+NSAVE <- 1000L
+NBURN <- 1000L
+```
+
+## Introduction
+
+`DynCount` fits state-space models to non-Gaussian time series. A
+latent trajectory \(z_t\) evolves with one of two dynamics,
+\[
+  z_t = \mu + \rho\, z_{t-1} + \varepsilon_t,
+\]
+a first-order random walk (`latent_dynamics = "rw"`, i.e. \(\rho = 1\)) or a
+stationary AR(1) process (`latent_dynamics = "ar1"`, with \(\rho\) estimated and
+constrained to \((-1, 1)\)). The scalar \(\mu\) is zero unless a drift/intercept
+is included. The observations are linked to it through one of two observation
+models:
+
+* **Poisson**, with a log link: \(y_t \sim \mathrm{Poisson}(e^{z_t})\);
+* **Binomial**, with a logit link: \(y_t \sim \mathrm{Binomial}(m_t,\,
+  \mathrm{logit}^{-1}(z_t))\), where the trials \(m_t\) are known.
+
+An optional known `offset` \(o_t\) may be added to the linear predictor of either
+observation model -- a log-exposure for the Poisson mean, \(e^{o_t + z_t}\), or a
+shift of the binomial logit. It is a fixed, user-supplied input, not part of the
+latent process \(z_t\), and defaults to zero.
+
+The model is estimated by MCMC. The distribution of the increments
+\(\varepsilon_t = z_t - \mu - \rho z_{t-1}\) is controlled by the `innovations`
+argument and can be Gaussian, Student-t, a finite scale mixture of normals, or a
+stochastic volatility process. For either family, zeros can optionally be
+handled by time-constant zero inflation.
+
+The package implements and extends the methodology of Zens and Bijak
+(2026), *The Annals of Applied Statistics*,
+[doi:10.1214/26-AOAS2171](https://doi.org/10.1214/26-AOAS2171).
+
+Note: the MCMC runs below use short chains (`nsave` = `r NSAVE`,
+`nburn` = `r NBURN`) and, for the two shipped series, a shortened window,
+so that the vignette builds quickly. For real analyses use longer chains and
+the full series.
+
+## Simulating data
+
+The simulation helpers generate data with a known latent path,
+which is useful for checking recovery.
+
+```{r simulate}
+sim <- simulate_dynamic_poisson(n = 80, sigma = 0.18, log_rate0 = 2.5, seed = 1)
+str(sim, max.level = 1)
+plot(sim$y, type = "h", xlab = "time", ylab = "count",
+     main = "Simulated Poisson random walk")
+lines(sim$rate, col = "steelblue", lwd = 2)
+```
+
+## Fitting a Poisson model (no zero inflation)
+
+The main entry point is `fit_dynamic_model()`. The defaults give an ordinary
+Poisson random walk with Gaussian increments.
+
+```{r fit-poisson}
+fit <- fit_dynamic_model(sim$y, family = "poisson",
+                         nsave = NSAVE, nburn = NBURN, seed = 1)
+fit
+summary(fit)
+```
+
+`plot_fitted()` overlays the posterior of the fitted mean on the data, and
+`plot_latent()` shows the latent log-rate trajectory with a credible band.
+
+```{r plot-fitted}
+plot_fitted(fit)
+```
+
+```{r plot-latent}
+plot_latent(fit)
+```
+
+## Forecasting
+
+Forecasts are produced **during** sampling. Request the horizon when fitting
+with `horizon = H`: `H` extra latent states are appended to the state vector
+and sampled as missing values inside the MCMC, and observations are drawn from
+the observation model at the sampled forecast states, so the intervals
+propagate parameter, state and innovation uncertainty. `forecast()` then
+extracts and summarises the stored draws.
+
+```{r forecast}
+fit_fc <- fit_dynamic_model(sim$y, family = "poisson", horizon = 8,
+                            nsave = NSAVE, nburn = NBURN, seed = 1)
+fc <- forecast(fit_fc)
+fc                                 # prints the forecast path
+fc$final                           # the single 8-step-ahead forecast
+plot_forecast(fit_fc)
+```
+
+The object stores the full forecast path (`fc$summary`, one row per horizon)
+and, separately, the final h-step-ahead prediction (`fc$final`,
+`fc$final_draws`). For long horizons, or with the heavier-tailed innovation
+structures (`"t"`, `"mixture"`, `"sv"`), use longer chains than the short ones
+shown here and, as with any MCMC output, check convergence before relying on
+the results.
+
+## AR(1) latent dynamics
+
+Setting `latent_dynamics = "ar1"` estimates an autoregressive coefficient
+\(\rho\) instead of fixing it at 1, jointly with an intercept \(\mu\). The pair
+is drawn by an exact conjugate Gibbs step, with \(\rho\) **truncated to the
+stationary region** \((-1, 1)\), so the posterior places mass only on
+stationary processes. The
+random walk is the special case \(\rho = 1\). **AR(1) always includes an
+intercept**: `include_mu` is enabled automatically, giving the process a
+non-zero stationary mean \(\mu / (1 - \rho)\).
+
+```{r ar1}
+# a genuinely stationary AR(1) log-rate: stationary mean 4, so mu = 4 * (1 - rho)
+sim_ar <- simulate_dynamic_poisson(150, sigma = 0.2, log_rate0 = 4,
+                                   rho = 0.9, mu = 0.4, seed = 3)
+# no need to set include_mu: AR(1) enables the intercept automatically
+fit_ar <- fit_dynamic_model(sim_ar$y, latent_dynamics = "ar1",
+                            nsave = NSAVE, nburn = NBURN, seed = 3)
+summary(fit_ar)                    # reports the posteriors of ar1_rho and mu
+```
+
+## Offset
+
+For Poisson data with varying exposure, pass a known `offset` (a log-exposure
+term); the mean becomes \(\exp(\text{offset}_t + z_t)\). Supply `forecast_offset`
+at fitting time for the future exposures.
+
+```{r offset}
+expo  <- log(runif(120, 50, 200))  # known exposure, e.g. population at risk
+sim_o <- simulate_dynamic_poisson(120, sigma = 0.12, log_rate0 = -3.5,
+                                  offset = expo, seed = 4)
+fit_o <- fit_dynamic_model(sim_o$y, offset = expo, horizon = 6,
+                           forecast_offset = log(120),
+                           nsave = NSAVE, nburn = NBURN, seed = 4)
+forecast(fit_o)$final
+```
+
+## A robust (Student-t) fit on the example data
+
+The package ships two real weekly count series of irregular maritime crossings.
+`med_weekly` (Mediterranean route) has larger counts and few zeros; the
+Student-t innovation makes the latent path robust to the occasional large
+week-to-week jump. For a fast build we demonstrate this using a recent window of the series.
+
+```{r med-t}
+data(med_weekly)
+med <- tail(med_weekly$count, 120)
+fit_med <- fit_dynamic_model(med, family = "poisson",
+                             innovations = "t",
+                             nsave = NSAVE, nburn = NBURN, seed = 2)
+summary(fit_med)
+```
+
+The posterior of the degrees-of-freedom parameter `t_df` indicates how heavy
+the increment tails are, with smaller values indicating heavier tails.
+
+## Zero inflation and structural zeros
+
+`uk_weekly` (English Channel crossings) has many zeros. Turning on zero
+inflation lets the model separate *structural* zeros (a time-constant gate that
+switches the count off) from *sampling* zeros (zeros the Poisson process
+produces on its own). We use the zero-heavy early window of the series here.
+
+```{r fit-zip}
+data(uk_weekly)
+uk <- uk_weekly$count[1:130]
+mean(uk == 0)                         # many zeros
+fit_zip <- fit_dynamic_model(uk, family = "poisson",
+                             zero_inflation = TRUE,
+                             nsave = NSAVE, nburn = NBURN, seed = 3)
+summary(fit_zip)
+```
+
+`structural_zero_prob()` reports, for each observed zero, the posterior
+probability that it is structural. 
+
+```{r structural}
+sz <- structural_zero_prob(fit_zip, zeros_only = TRUE)
+head(sz, 10)
+plot_zero_inflation(fit_zip)
+```
+
+Interpreting the table: `p_structural` close to 1 flags a zero that the latent
+rate cannot easily explain (e.g., the underlying rate was high, so a Poisson zero
+would be unlikely), whereas `p_structural` near 0 marks a zero that is
+consistent with a genuinely low rate.
+
+### Conditional versus unconditional fits and replicates
+
+Under zero inflation the observed count is \(y_t = v_t \tilde y_t\), where the
+gate \(v_t \sim \mathrm{Bernoulli}(\pi_{\text{open}})\) switches the count off
+and \(\tilde y_t\) comes from the Poisson/binomial observation model. The fit stores **both** flavours of in-sample quantities:
+
+* **Unconditional** (`fitted`, `yrep`; the defaults returned by
+  `predict()`): the gate is included, so the replicates reproduce the
+  structural zeros. Use these for **posterior predictive checks**.
+* **Conditional on the gate being open** (`fitted_open`, `yrep_open`;
+  `predict(fit, conditional = TRUE)`): the latent-implied mean and a replicate
+  drawn straight from the observation model, describing the latent intensity
+  process.
+
+For models without zero inflation the two versions are identical. Response
+forecasts (`forecast()`, `forecast_y`) are always unconditional -- the gate is
+applied to each forecast draw.
+
+```{r ppc-zip}
+# zero proportion in the data vs both flavours of replicate
+c(observed      = mean(uk == 0),
+  yrep          = mean(fit_zip$draws$yrep == 0),        # gate applied: comparable
+  yrep_open     = mean(fit_zip$draws$yrep_open == 0))   # gate-open only: too few zeros
+```
+
+## A binomial model with known trials
+
+The binomial branch keeps the same interface; the only addition is the known
+number of `trials`.
+
+```{r binomial}
+simb <- simulate_dynamic_binomial(n = 80, sigma = 0.12, trials = 50, seed = 4)
+fit_bin <- fit_dynamic_model(simb$y, family = "binomial", trials = simb$trials,
+                             horizon = 8, forecast_trials = 50,
+                             nsave = NSAVE, nburn = NBURN, seed = 4)
+summary(fit_bin)
+plot_fitted(fit_bin)
+```
+
+Forecasting works the same way; supply `forecast_trials` (at fitting time) for
+the future trial sizes.
+
+```{r binomial-forecast}
+fc_bin <- forecast(fit_bin)
+fc_bin$summary
+```
+
+Zero inflation is available for the binomial family too: a structural-zero
+gate sits in front of the `Binomial(m, p)` process, exactly as for the
+Poisson. Set `zero_inflation = TRUE` (or `zeros = "inflated"`) and read the
+per-zero diagnostics with `structural_zero_prob()`.
+
+```{r binomial-zip}
+simz <- simulate_dynamic_binomial(n = 80, sigma = 0.1, trials = 40, logit0 = 1.5,
+                                  zero_inflation = 0.2, seed = 7)
+fit_bz <- fit_dynamic_model(simz$y, family = "binomial", trials = 40,
+                            zero_inflation = TRUE,
+                            nsave = NSAVE, nburn = NBURN, seed = 7)
+head(structural_zero_prob(fit_bz))
+```
+
+## Choosing and changing priors
+
+Every prior hyperparameter is exposed through `dynamic_prior()`; printing the
+object shows the current settings.
+
+```{r priors}
+dynamic_prior()
+# a tighter prior favouring smoother latent paths
+pr <- dynamic_prior(var_shape = 10, var_rate = 0.2)
+fit_smooth <- fit_dynamic_model(sim$y, prior = pr,
+                                nsave = NSAVE, nburn = NBURN, seed = 1)
+```
+
+## References
+
+Zens, G. and Bijak, J. (2026). Dynamic Count Models with Flexible Innovation
+Processes for Irregular Maritime Migration. *The Annals of Applied Statistics*,
+20(2), 1671--1690.
+[doi:10.1214/26-AOAS2171](https://doi.org/10.1214/26-AOAS2171)
