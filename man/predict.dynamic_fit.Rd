@@ -6,7 +6,7 @@
 \usage{
 \method{predict}{dynamic_fit}(
   object,
-  type = c("mean", "response"),
+  type = c("mean", "response", "prob"),
   conditional = FALSE,
   probs = c(0.025, 0.5, 0.975),
   ...
@@ -16,7 +16,10 @@
 \item{object}{A \code{"dynamic_fit"} object.}
 
 \item{type}{\code{"mean"} (default) returns the posterior of the mean of \code{y};
-\code{"response"} returns posterior predictive replicates of \code{y}.}
+\code{"response"} returns posterior predictive replicates of \code{y}. For the
+multinomial family \code{"prob"} returns the posterior of the category
+shares \eqn{p_{t,k}} (the mean is then the expected count
+\eqn{N_t p_{t,k}}).}
 
 \item{conditional}{Logical. Leave \code{FALSE} (the default) for anything
 compared against observed data -- posterior predictive checks,
@@ -26,8 +29,9 @@ zero-inflated model (the gate is included, so structural zeros are
 reproduced); with \code{TRUE}, they are conditional on the gate being open,
 i.e. drawn straight from the Poisson/binomial observation model, and show
 systematically too few zeros under zero inflation. Without zero inflation
-the two versions are identical. See \link{DynCount-package} for the gate
-notation.}
+the two versions are identical, and the argument is ignored for the
+multinomial family (which has no gate). See \link{DynCount-package} for the
+gate notation.}
 
 \item{probs}{Quantile probabilities for the summary. Default
 \code{c(0.025, 0.5, 0.975)}.}
@@ -36,13 +40,17 @@ notation.}
 }
 \value{
 A list with \code{summary} (a data frame, one row per observation) and
-\code{draws} (the underlying draws matrix, draws x time).
+\code{draws} (the underlying draws matrix, draws x time). For the multinomial
+family \code{summary} is in long format with one row per observation and
+category (columns \code{time}, \code{category}, \code{observed}, ...) and \code{draws} is a
+\verb{draws x time x K} array.
 }
 \description{
 In-sample fitted values and posterior predictive replicates
 }
 \examples{
 sim <- simulate_dynamic_poisson(40, 0.2, 2, seed = 1)
-fit <- fit_dynamic_model(sim$y, nsave = 200, nburn = 100)
-head(predict(fit)$summary)
+fit <- fit_dynamic_model(sim$y, nsave = 200, nburn = 100, seed = 1)
+head(predict(fit)$summary)                     # posterior of the mean of y
+head(predict(fit, type = "response")$summary)  # posterior predictive
 }

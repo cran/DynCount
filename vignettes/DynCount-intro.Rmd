@@ -1,9 +1,9 @@
 ---
-title: "Dynamic Models for Poisson and Binomial Time Series"
+title: "Dynamic Models for Poisson, Binomial and Multinomial Time Series"
 author: "Gregor Zens"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Dynamic Models for Poisson and Binomial Time Series}
+  %\VignetteIndexEntry{Dynamic Models for Poisson, Binomial and Multinomial Time Series}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -24,45 +24,62 @@ NBURN <- 1000L
 
 ## Introduction
 
-`DynCount` fits state-space models to non-Gaussian time series. A
-latent trajectory \(z_t\) evolves with one of two dynamics,
+`DynCount` fits Bayesian state-space models to count time series. A latent
+trajectory \(z_t\) evolves with one of two dynamics,
 \[
   z_t = \mu + \rho\, z_{t-1} + \varepsilon_t,
 \]
 a first-order random walk (`latent_dynamics = "rw"`, i.e. \(\rho = 1\)) or a
 stationary AR(1) process (`latent_dynamics = "ar1"`, with \(\rho\) estimated and
-constrained to \((-1, 1)\)). The scalar \(\mu\) is zero unless a drift/intercept
-is included. The observations are linked to it through one of two observation
-models:
+constrained to \((-1, 1)\)). The scalar \(\mu\) is zero unless it is switched
+on with `include_mu = TRUE`. Under the random walk it acts as a drift, and
+under AR(1) it is an intercept that is always included. The observations are
+linked to the latent trajectory through one of three observation models:
 
-* **Poisson**, with a log link: \(y_t \sim \mathrm{Poisson}(e^{z_t})\);
-* **Binomial**, with a logit link: \(y_t \sim \mathrm{Binomial}(m_t,\,
-  \mathrm{logit}^{-1}(z_t))\), where the trials \(m_t\) are known.
+* **Poisson** with a log link, so that \(y_t \sim \mathrm{Poisson}(e^{z_t})\);
+* **Binomial** with a logit link, so that \(y_t \sim \mathrm{Binomial}(m_t,\,
+  \mathrm{logit}^{-1}(z_t))\), where the trials \(m_t\) are known;
+* **Multinomial**, for choice counts over \(K\) categories with known totals
+  \(N_t\). Here each non-baseline category \(k\) has its own latent
+  additive-log-ratio series \(z_{t,k} = \log(p_{t,k}/p_{t,b})\), which gives
+  \(K - 1\) latent processes (see below).
 
-An optional known `offset` \(o_t\) may be added to the linear predictor of either
-observation model -- a log-exposure for the Poisson mean, \(e^{o_t + z_t}\), or a
-shift of the binomial logit. It is a fixed, user-supplied input, not part of the
-latent process \(z_t\), and defaults to zero.
+An optional known `offset` \(o_t\) may be added to the linear predictor of all
+three observation models. It acts as a log-exposure for the Poisson mean,
+\(e^{o_t + z_t}\), as a shift of the binomial logit, and as a per-category
+shift of the multinomial log-ratios. It is a fixed, user-supplied input, not
+part of the latent process \(z_t\), and defaults to zero.
 
-The model is estimated by MCMC. The distribution of the increments
-\(\varepsilon_t = z_t - \mu - \rho z_{t-1}\) is controlled by the `innovations`
-argument and can be Gaussian, Student-t, a finite scale mixture of normals, or a
-stochastic volatility process. For either family, zeros can optionally be
-handled by time-constant zero inflation.
+The distribution of the increments \(\varepsilon_t = z_t - \mu - \rho z_{t-1}\)
+is controlled by the `innovations` argument. It can be Gaussian (`"gaussian"`,
+the default), Student-t (`"t"`), a finite scale mixture of normals
+(`"mixture"`) or a stochastic volatility process (`"sv"`, which requires the
+stochvol package). For the Poisson and binomial families, zeros can be handled
+by zero inflation with a time-constant gate-open probability
+(`zeros = "inflated"`) or treated as missing values (`zeros = "missing"`).
+
+The model is estimated by Metropolis-within-Gibbs MCMC. The latent states are
+updated with adaptive random-walk Metropolis steps that use their Gaussian
+Markov random field full conditionals. The
+innovation parameters, \(\mu\) and \(\rho\) are drawn by Gibbs steps, with a
+Metropolis step for the Student-t degrees of freedom. Forecasts are obtained
+after fitting by forward simulation from the posterior draws.
 
 The package implements and extends the methodology of Zens and Bijak
 (2026), *The Annals of Applied Statistics*,
 [doi:10.1214/26-AOAS2171](https://doi.org/10.1214/26-AOAS2171).
 
-Note: the MCMC runs below use short chains (`nsave` = `r NSAVE`,
-`nburn` = `r NBURN`) and, for the two shipped series, a shortened window,
-so that the vignette builds quickly. For real analyses use longer chains and
-the full series.
+Note that the MCMC runs below use short chains (`nsave` = `r NSAVE`,
+`nburn` = `r NBURN`) and, for the two shipped series, a shortened window, so
+that the vignette builds quickly. The effective number of draws can be much
+smaller than `nsave`. For real analyses, use longer chains and the full series,
+and check convergence as shown in the section on convergence below.
 
 ## Simulating data
 
-The simulation helpers generate data with a known latent path,
-which is useful for checking recovery.
+The simulation helpers generate data with a known latent path, which is useful
+for checking recovery. `simulate_dynamic_poisson()` returns the counts `y`, the
+latent log-rate `log_rate` and the Poisson mean `rate`.
 
 ```{r simulate}
 sim <- simulate_dynamic_poisson(n = 80, sigma = 0.18, log_rate0 = 2.5, seed = 1)
@@ -72,7 +89,7 @@ plot(sim$y, type = "h", xlab = "time", ylab = "count",
 lines(sim$rate, col = "steelblue", lwd = 2)
 ```
 
-## Fitting a Poisson model (no zero inflation)
+## Fitting a Poisson model
 
 The main entry point is `fit_dynamic_model()`. The defaults give an ordinary
 Poisson random walk with Gaussian increments.
@@ -84,6 +101,8 @@ fit
 summary(fit)
 ```
 
+For this model the only global parameter is `innov_sd`, the standard deviation
+of the latent increments. Its true value in the simulation is 0.18.
 `plot_fitted()` overlays the posterior of the fitted mean on the data, and
 `plot_latent()` shows the latent log-rate trajectory with a credible band.
 
@@ -95,30 +114,48 @@ plot_fitted(fit)
 plot_latent(fit)
 ```
 
+`predict()` summarises the in-sample fit. With the default `type = "mean"` it
+returns the posterior of the mean of \(y_t\), and with `type = "response"` it
+returns posterior predictive replicates of \(y_t\).
+
+```{r predict}
+head(predict(fit)$summary)
+```
+
+The draws themselves are stored in `fit$draws`. Its main components are the
+latent states `z` (a draws x time matrix aligned with the observations), the
+increment variances `sig2`, the fitted means `fitted`, the replicates `yrep`
+and the parameter draws (`innov_var`, `rho`, `mu` and, depending on the model,
+`nu`, `pi_open`, `mix_weight`, `sv_phi` and others). The summary rows are
+derived from these draws. For example, `innov_sd` is the square root of
+`innov_var`, `t_df` summarises `nu`, `ar1_rho` summarises `rho`, `drift_mu` or
+`intercept_mu` summarise `mu`, and `gate_open_prob` summarises `pi_open`. The
+full layout is documented in `?fit_dynamic_model` and `?summary.dynamic_fit`.
+
 ## Forecasting
 
-Forecasts are produced **during** sampling. Request the horizon when fitting
-with `horizon = H`: `H` extra latent states are appended to the state vector
-and sampled as missing values inside the MCMC, and observations are drawn from
-the observation model at the sampled forecast states, so the intervals
-propagate parameter, state and innovation uncertainty. `forecast()` then
-extracts and summarises the stored draws.
+Forecasts are obtained by forward simulation. For every stored posterior draw,
+`forecast()` propagates the latent path from the last in-sample state with the
+state equation, drawing the increments from the fitted innovation structure.
+It then draws a response from the observation model at each simulated state,
+so the intervals reflect parameter, state and innovation uncertainty. Future
+states carry no likelihood, so this gives exact draws from the posterior
+predictive distribution, and the horizon can be chosen after fitting.
 
 ```{r forecast}
-fit_fc <- fit_dynamic_model(sim$y, family = "poisson", horizon = 8,
-                            nsave = NSAVE, nburn = NBURN, seed = 1)
-fc <- forecast(fit_fc)
+fc <- forecast(fit, horizon = 8, seed = 1)
 fc                                 # prints the forecast path
 fc$final                           # the single 8-step-ahead forecast
-plot_forecast(fit_fc)
+plot_forecast(fit, horizon = 8, seed = 1)
 ```
 
 The object stores the full forecast path (`fc$summary`, one row per horizon)
 and, separately, the final h-step-ahead prediction (`fc$final`,
-`fc$final_draws`). For long horizons, or with the heavier-tailed innovation
-structures (`"t"`, `"mixture"`, `"sv"`), use longer chains than the short ones
-shown here and, as with any MCMC output, check convergence before relying on
-the results.
+`fc$final_draws`). Alternatively, `fit_dynamic_model(..., horizon = H)`
+simulates an `H`-step forecast right after sampling and stores it in the fit,
+and `forecast(fit)` without a horizon then returns the stored forecast. If a
+fit holds no stored forecast, `forecast()` needs a `horizon` and stops with an
+error otherwise.
 
 ## AR(1) latent dynamics
 
@@ -126,46 +163,66 @@ Setting `latent_dynamics = "ar1"` estimates an autoregressive coefficient
 \(\rho\) instead of fixing it at 1, jointly with an intercept \(\mu\). The pair
 is drawn by an exact conjugate Gibbs step, with \(\rho\) **truncated to the
 stationary region** \((-1, 1)\), so the posterior places mass only on
-stationary processes. The
-random walk is the special case \(\rho = 1\). **AR(1) always includes an
-intercept**: `include_mu` is enabled automatically, giving the process a
-non-zero stationary mean \(\mu / (1 - \rho)\).
+stationary processes. **AR(1) always includes an intercept.** The package
+enables `include_mu` automatically, which gives the process a non-zero
+stationary mean \(\mu / (1 - \rho)\). The random walk corresponds to
+\(\rho = 1\), which lies outside the AR(1) parameter space, so the two
+specifications are separate models rather than nested ones.
 
 ```{r ar1}
-# a genuinely stationary AR(1) log-rate: stationary mean 4, so mu = 4 * (1 - rho)
-sim_ar <- simulate_dynamic_poisson(150, sigma = 0.2, log_rate0 = 4,
+# a genuinely stationary AR(1) log-rate with stationary mean 4, so mu = 4 * (1 - rho)
+sim_ar <- simulate_dynamic_poisson(n = 150, sigma = 0.2, log_rate0 = 4,
                                    rho = 0.9, mu = 0.4, seed = 3)
-# no need to set include_mu: AR(1) enables the intercept automatically
-fit_ar <- fit_dynamic_model(sim_ar$y, latent_dynamics = "ar1",
+# no need to set include_mu, because AR(1) enables the intercept automatically
+fit_ar <- fit_dynamic_model(sim_ar$y, family = "poisson", latent_dynamics = "ar1",
                             nsave = NSAVE, nburn = NBURN, seed = 3)
-summary(fit_ar)                    # reports the posteriors of ar1_rho and mu
+summary(fit_ar)                    # reports the posteriors of ar1_rho and intercept_mu
 ```
+
+For a random walk with drift, keep the default dynamics and set
+`include_mu = TRUE`. The drift then appears as `drift_mu` in the summary.
 
 ## Offset
 
 For Poisson data with varying exposure, pass a known `offset` (a log-exposure
-term); the mean becomes \(\exp(\text{offset}_t + z_t)\). Supply `forecast_offset`
-at fitting time for the future exposures.
+term), and the mean becomes \(\exp(\text{offset}_t + z_t)\). When forecasting,
+supply the future exposures as `forecast_offset`, either one value per horizon
+or a single value that is recycled. If a model has an offset and no
+`forecast_offset` is given, `forecast()` warns and assumes an offset of zero.
 
 ```{r offset}
 expo  <- log(runif(120, 50, 200))  # known exposure, e.g. population at risk
-sim_o <- simulate_dynamic_poisson(120, sigma = 0.12, log_rate0 = -3.5,
+sim_o <- simulate_dynamic_poisson(n = 120, sigma = 0.12, log_rate0 = -3.5,
                                   offset = expo, seed = 4)
-fit_o <- fit_dynamic_model(sim_o$y, offset = expo, horizon = 6,
-                           forecast_offset = log(120),
+fit_o <- fit_dynamic_model(sim_o$y, family = "poisson", offset = expo,
                            nsave = NSAVE, nburn = NBURN, seed = 4)
-forecast(fit_o)$final
+forecast(fit_o, horizon = 6, forecast_offset = log(120), seed = 4)$final
 ```
 
-## A robust (Student-t) fit on the example data
+## Example data
 
-The package ships two real weekly count series of irregular maritime crossings.
-`med_weekly` (Mediterranean route) has larger counts and few zeros; the
-Student-t innovation makes the latent path robust to the occasional large
-week-to-week jump. For a fast build we demonstrate this using a recent window of the series.
+The package ships two real weekly count series of irregular maritime
+crossings, which are loaded on first use. `uk_weekly` covers English Channel
+crossings from ISO week 2018-W01 to 2025-W11 (376 weeks), and `med_weekly`
+covers Mediterranean crossings from 2015-W40 to 2025-W11 (494 weeks). Both have
+the columns `week` (the ISO week label), `count` and `date` (the Monday of the
+week).
+
+```{r data}
+str(uk_weekly)
+plot(med_weekly$date, med_weekly$count, type = "h", xlab = "week",
+     ylab = "crossings", main = "Weekly Mediterranean crossings")
+```
+
+## Heavy-tailed and time-varying innovations
+
+The Mediterranean series has large counts and few zeros. With Gaussian
+increments, the occasional large week-to-week jump would inflate the
+innovation variance for the whole series. The Student-t innovation makes the
+latent path robust to such jumps. For a fast build we use the most recent 120
+weeks.
 
 ```{r med-t}
-data(med_weekly)
 med <- tail(med_weekly$count, 120)
 fit_med <- fit_dynamic_model(med, family = "poisson",
                              innovations = "t",
@@ -174,17 +231,69 @@ summary(fit_med)
 ```
 
 The posterior of the degrees-of-freedom parameter `t_df` indicates how heavy
-the increment tails are, with smaller values indicating heavier tails.
+the increment tails are, with smaller values indicating heavier tails. Its
+prior is set with `df_min` and `df_mean_excess` in `dynamic_prior()`.
+
+A finite scale mixture of normals is a more flexible alternative. The number
+of components is set with `dynamic_prior(mix_components = ...)` and defaults
+to two. The components are exchangeable and are not identified
+individually, so `summary()` reports only `innov_sd`, the marginal standard
+deviation of the increments. The draws of the component weights and
+variances are stored in `fit$draws$mix_weight` and `fit$draws$mix_var`.
+
+```{r med-mixture}
+fit_mix <- fit_dynamic_model(med, family = "poisson", innovations = "mixture",
+                             nsave = NSAVE, nburn = NBURN, seed = 2)
+summary(fit_mix)
+```
+
+Stochastic volatility lets the increment variance change over time. The
+log-variance follows an AR(1) process whose level, persistence and volatility
+are reported as `sv_mu`, `sv_phi` and `sv_sigma`, and the per-increment
+variances are stored in `fit$draws$sig2`. This option requires the stochvol
+package.
+
+```{r med-sv, eval = requireNamespace("stochvol", quietly = TRUE)}
+fit_sv <- fit_dynamic_model(med, family = "poisson", innovations = "sv",
+                            nsave = NSAVE, nburn = NBURN, seed = 2)
+summary(fit_sv)
+vol <- sqrt(apply(fit_sv$draws$sig2, 2, median))
+plot(vol, type = "l", xlab = "week", ylab = "increment SD (posterior median)",
+     main = "Time-varying innovation SD")
+```
+
+## Checking convergence
+
+MCMC output should be checked before it is interpreted. The effective sample
+size measures how many independent draws an autocorrelated chain is worth, and
+the coda package computes it directly from the stored draws.
+
+```{r ess, eval = requireNamespace("coda", quietly = TRUE)}
+ess <- function(x) round(unname(coda::effectiveSize(x)))
+c(innov_sd = ess(sqrt(fit$draws$innov_var)),
+  z_40     = ess(fit$draws$z[, 40]),
+  t_df     = ess(fit_med$draws$nu))
+```
+
+With the short chains used here, several of these values are only a fraction
+of the `r NSAVE` kept draws. The innovation standard deviation of a smooth
+latent path is typically the slowest quantity to mix, so increase `nsave` (or
+`thin`) until the effective sample sizes of the quantities of interest are
+comfortably large. Trace plots, such as
+`plot(sqrt(fit$draws$innov_var), type = "l")`, and several chains with
+different seeds are useful further checks.
 
 ## Zero inflation and structural zeros
 
-`uk_weekly` (English Channel crossings) has many zeros. Turning on zero
-inflation lets the model separate *structural* zeros (a time-constant gate that
-switches the count off) from *sampling* zeros (zeros the Poisson process
-produces on its own). We use the zero-heavy early window of the series here.
+`uk_weekly` (English Channel crossings) has many zeros in its early weeks.
+Turning on zero inflation lets the model separate *structural* zeros from
+*sampling* zeros. A structural zero arises when a latent gate switches the
+count off, whereas a sampling zero is produced by the Poisson process itself.
+The gate is drawn separately for every week, while the probability that it is
+open is a single parameter that is constant over time. We use the zero-heavy
+early window of the series here.
 
 ```{r fit-zip}
-data(uk_weekly)
 uk <- uk_weekly$count[1:130]
 mean(uk == 0)                         # many zeros
 fit_zip <- fit_dynamic_model(uk, family = "poisson",
@@ -193,71 +302,85 @@ fit_zip <- fit_dynamic_model(uk, family = "poisson",
 summary(fit_zip)
 ```
 
+In `fit_dynamic_model()`, `zero_inflation = TRUE` is shorthand for
+`zeros = "inflated"`. The summary row `gate_open_prob` is the posterior of the
+gate-open probability \(\pi_{\text{open}}\), so one minus it is the
+probability of a structural zero. A simpler alternative is `zeros = "missing"`,
+which treats all observed zeros as missing values.
+
 `structural_zero_prob()` reports, for each observed zero, the posterior
-probability that it is structural. 
+probability that it is structural. By default it returns only the zero
+observations, and `zeros_only = FALSE` returns one row per observation.
+`plot_zero_inflation()` shows these probabilities as a bar chart with one bar
+per observed zero.
 
 ```{r structural}
-sz <- structural_zero_prob(fit_zip, zeros_only = TRUE)
+sz <- structural_zero_prob(fit_zip)
 head(sz, 10)
 plot_zero_inflation(fit_zip)
 ```
 
-Interpreting the table: `p_structural` close to 1 flags a zero that the latent
-rate cannot easily explain (e.g., the underlying rate was high, so a Poisson zero
-would be unlikely), whereas `p_structural` near 0 marks a zero that is
-consistent with a genuinely low rate.
+In the resulting table, a `p_structural` close to 1 flags a zero that the
+latent rate cannot easily explain (e.g., the underlying rate was high, so a
+Poisson zero would be unlikely). By contrast, a `p_structural` near 0 marks a
+zero that is consistent with a genuinely low rate.
 
 ### Conditional versus unconditional fits and replicates
 
 Under zero inflation the observed count is \(y_t = v_t \tilde y_t\), where the
 gate \(v_t \sim \mathrm{Bernoulli}(\pi_{\text{open}})\) switches the count off
-and \(\tilde y_t\) comes from the Poisson/binomial observation model. The fit stores **both** flavours of in-sample quantities:
+and \(\tilde y_t\) comes from the Poisson/binomial observation model. The fit
+stores **both** flavours of in-sample quantities:
 
-* **Unconditional** (`fitted`, `yrep`; the defaults returned by
-  `predict()`): the gate is included, so the replicates reproduce the
-  structural zeros. Use these for **posterior predictive checks**.
-* **Conditional on the gate being open** (`fitted_open`, `yrep_open`;
-  `predict(fit, conditional = TRUE)`): the latent-implied mean and a replicate
-  drawn straight from the observation model, describing the latent intensity
-  process.
+* **Unconditional** quantities (`fitted`, `yrep`) include the gate and are the
+  defaults returned by `predict()`. The replicates therefore reproduce the
+  structural zeros, which makes them the right choice for **posterior
+  predictive checks**.
+* **Conditional on the gate being open**, the fit stores `fitted_open` and
+  `yrep_open`, which `predict(fit, conditional = TRUE)` returns. These are the
+  latent-implied mean and a replicate drawn straight from the observation
+  model, so they describe the latent intensity process.
 
 For models without zero inflation the two versions are identical. Response
-forecasts (`forecast()`, `forecast_y`) are always unconditional -- the gate is
+forecasts from `forecast()` are always unconditional, because the gate is
 applied to each forecast draw.
 
 ```{r ppc-zip}
 # zero proportion in the data vs both flavours of replicate
 c(observed      = mean(uk == 0),
-  yrep          = mean(fit_zip$draws$yrep == 0),        # gate applied: comparable
-  yrep_open     = mean(fit_zip$draws$yrep_open == 0))   # gate-open only: too few zeros
+  yrep          = mean(fit_zip$draws$yrep == 0),        # gate applied, so comparable
+  yrep_open     = mean(fit_zip$draws$yrep_open == 0))   # gate open only, so too few zeros
 ```
 
 ## A binomial model with known trials
 
-The binomial branch keeps the same interface; the only addition is the known
-number of `trials`.
+The binomial branch keeps the same interface, and the only addition is the
+known number of `trials`. A single value is recycled over time.
 
 ```{r binomial}
 simb <- simulate_dynamic_binomial(n = 80, sigma = 0.12, trials = 50, seed = 4)
 fit_bin <- fit_dynamic_model(simb$y, family = "binomial", trials = simb$trials,
-                             horizon = 8, forecast_trials = 50,
                              nsave = NSAVE, nburn = NBURN, seed = 4)
 summary(fit_bin)
 plot_fitted(fit_bin)
 ```
 
-Forecasting works the same way; supply `forecast_trials` (at fitting time) for
-the future trial sizes.
+Forecasting works the same way. Supply the future trial sizes as
+`forecast_trials`, either one value per horizon or a single value that is
+recycled. If they are omitted, the last observed number of trials is used.
 
 ```{r binomial-forecast}
-fc_bin <- forecast(fit_bin)
+fc_bin <- forecast(fit_bin, horizon = 8, forecast_trials = 50, seed = 4)
 fc_bin$summary
 ```
 
-Zero inflation is available for the binomial family too: a structural-zero
-gate sits in front of the `Binomial(m, p)` process, exactly as for the
-Poisson. Set `zero_inflation = TRUE` (or `zeros = "inflated"`) and read the
-per-zero diagnostics with `structural_zero_prob()`.
+Zero inflation is available for the binomial family too. Exactly as for the
+Poisson, a structural-zero gate sits in front of the `Binomial(m, p)` process.
+To use it, set `zero_inflation = TRUE` (or `zeros = "inflated"`) and read the
+per-zero diagnostics with `structural_zero_prob()`. Note that the simulators
+use their `zero_inflation` argument differently. In
+`simulate_dynamic_binomial()` it is the probability of a structural zero, here
+0.2, which corresponds to a gate-open probability of 0.8.
 
 ```{r binomial-zip}
 simz <- simulate_dynamic_binomial(n = 80, sigma = 0.1, trials = 40, logit0 = 1.5,
@@ -265,20 +388,91 @@ simz <- simulate_dynamic_binomial(n = 80, sigma = 0.1, trials = 40, logit0 = 1.5
 fit_bz <- fit_dynamic_model(simz$y, family = "binomial", trials = 40,
                             zero_inflation = TRUE,
                             nsave = NSAVE, nburn = NBURN, seed = 7)
+summary(fit_bz)$params
 head(structural_zero_prob(fit_bz))
 ```
 
+## Multinomial choice counts
+
+When each period yields counts over \(K\) mutually exclusive categories, `family =
+"multinomial"` models the category *shares* dynamically. One category \(b\)
+is the baseline -- by default the one with the largest total count -- and
+each of the remaining \(K - 1\) categories has its own latent
+additive-log-ratio (ALR) series
+\[
+  z_{t,k} = \log \frac{p_{t,k}}{p_{t,b}}, \qquad
+  p_{t,k} = \frac{e^{z_{t,k}}}{1 + \sum_{j \ne b} e^{z_{t,j}}}, \qquad
+  y_t \sim \mathrm{Multinomial}(N_t, p_t),
+\]
+where the row totals \(N_t\) are treated as known. Every ALR series follows
+the selected `latent_dynamics` and `innovations`, but the series share no
+parameters. Instead, each has its own innovation variance, its own \(\rho\)
+and \(\mu\), and its own copy of the prior. The series therefore interact
+only through the multinomial likelihood, and the sampler updates each series
+in turn with the other categories held at their current values. Zero
+inflation is not available for this family, and rows with a total of zero
+are treated as missing.
+
+The simulation below uses category C as the baseline. We pass the simulated
+baseline to the fit, so that the fitted log-ratios are on the same scale as
+the simulated ones. Without it the fit would use the default baseline, the
+category with the largest total count, which here is B.
+
+```{r multinomial}
+sim_m <- simulate_dynamic_multinomial(n = 80, sigma = c(0.15, 0.08), trials = 250,
+                                      alr0 = c(-1, 0.3), baseline = 3,
+                                      categories = c("A", "B", "C"), seed = 5)
+head(sim_m$y)
+colSums(sim_m$y)
+fit_m <- fit_dynamic_model(sim_m$y, family = "multinomial",
+                           baseline = sim_m$baseline,
+                           nsave = NSAVE, nburn = NBURN, seed = 5)
+fit_m
+summary(fit_m)$params
+```
+
+The true innovation standard deviations are 0.15 for A and 0.08 for B.
+Posterior draws of multinomial fits carry a trailing category dimension. For
+example, `fit_m$draws$fitted_prob` is a `draws x time x K` array of shares, and
+the latent parameters (`innov_var`, `rho`, `mu`, ...) are `draws x (K - 1)`
+matrices named by category. `predict()` and `forecast()` return long-format
+summaries with a `category` column, and the plot functions draw one panel per
+category. For forecasts, `forecast_trials` gives the future totals. If it is
+omitted, the last non-zero row total is used.
+
+```{r multinomial-plots, fig.height = 6}
+head(predict(fit_m, type = "prob")$summary)
+forecast(fit_m, horizon = 6, forecast_trials = 250, seed = 5)$final
+plot_fitted(fit_m)
+plot_latent(fit_m, category = "A")
+```
+
+Two practical notes. First, the model is not invariant to the choice of
+baseline, because the dynamics are placed on the log-ratios *relative to the
+baseline*. If the baseline's own share moves a lot, every ALR series inherits
+that movement. It is therefore best to choose a large category with a stable
+share (the `baseline` argument accepts a column name or index). Second, with
+\(K = 2\) and the second column as baseline the model is exactly the binomial
+model of the previous section.
+
 ## Choosing and changing priors
 
-Every prior hyperparameter is exposed through `dynamic_prior()`; printing the
-object shows the current settings.
+Every prior hyperparameter is exposed through `dynamic_prior()`, and printing
+the object shows the current settings. The default prior on the innovation
+variance is \(\mathrm{InvGamma}(0.01, 0.01)\). It is weakly informative for
+increment standard deviations of about 0.1 and above, but it is not
+scale-free. For very smooth series, with increment standard deviations of a
+few hundredths, the results can be sensitive to this prior, and a
+sensitivity check with a smaller `var_rate` is advisable. A larger `var_rate` favours rougher latent paths.
 
 ```{r priors}
 dynamic_prior()
-# a tighter prior favouring smoother latent paths
-pr <- dynamic_prior(var_shape = 10, var_rate = 0.2)
-fit_smooth <- fit_dynamic_model(sim$y, prior = pr,
-                                nsave = NSAVE, nburn = NBURN, seed = 1)
+# an informative prior favouring rougher latent paths
+pr <- dynamic_prior(var_shape = 2.5, var_rate = 0.5)
+fit_inf <- fit_dynamic_model(sim$y, family = "poisson", prior = pr,
+                             nsave = NSAVE, nburn = NBURN, seed = 1)
+rbind(default = summary(fit)$params["innov_sd", ],
+      informative = summary(fit_inf)$params["innov_sd", ])
 ```
 
 ## References

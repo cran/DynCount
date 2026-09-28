@@ -5,10 +5,11 @@
 \alias{uk_weekly}
 \title{Weekly English Channel crossings (UK example)}
 \format{
-A data frame with 376 rows and 2 variables:
+A data frame with 376 rows and 3 variables:
 \describe{
 \item{week}{ISO week label, e.g. \code{"2018-W01"}.}
 \item{count}{Non-negative integer count of weekly crossings.}
+\item{date}{The Monday of the ISO week, as a \code{Date}.}
 }
 }
 \source{
@@ -21,19 +22,19 @@ uk_weekly
 }
 \description{
 A weekly count series of irregular small-boat crossings of the English
-Channel towards the United Kingdom, beginning in early 2018. The series has
-frequent zeros in its early weeks, which makes it a useful example for
-zero inflation with the Poisson model. The series is used in the
+Channel towards the United Kingdom, covering the ISO weeks 2018-W01 to
+2025-W11 (376 weeks). The series has frequent zeros in its early weeks
+(43\% of the first 130 weeks), which makes it a useful example for zero
+inflation with the Poisson model. The series is used in the
 irregular-migration application of Zens and Bijak (2026).
 }
 \examples{
-data(uk_weekly)
-plot(uk_weekly$count, type = "h")
+plot(uk_weekly$date, uk_weekly$count, type = "h", xlab = "week", ylab = "crossings")
 mean(uk_weekly$count == 0)
 }
 \references{
 Zens, G. and Bijak, J. (2026). Dynamic Count Models with Flexible Innovation
 Processes for Irregular Maritime Migration. \emph{The Annals of Applied
-Statistics}. \doi{10.1214/26-AOAS2171}.
+Statistics}, 20(2), 1671--1690. \doi{10.1214/26-AOAS2171}.
 }
 \keyword{datasets}

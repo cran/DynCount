@@ -12,7 +12,8 @@
 \item{which}{One of \code{"fitted"} (default), \code{"latent"}, \code{"forecast"},
 \code{"zeros"}.}
 
-\item{...}{Passed to the underlying plotting function.}
+\item{...}{Passed to the underlying plotting function (e.g. \code{category}
+for multinomial fits, or \code{horizon} for \code{which = "forecast"}).}
 }
 \value{
 Invisibly, the result of the underlying plotting function.

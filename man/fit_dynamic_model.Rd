@@ -2,11 +2,11 @@
 % Please edit documentation in R/fit.R
 \name{fit_dynamic_model}
 \alias{fit_dynamic_model}
-\title{Fit a Bayesian dynamic count / binomial time-series model}
+\title{Fit a Bayesian dynamic count / binomial / multinomial time-series model}
 \usage{
 fit_dynamic_model(
   y,
-  family = c("poisson", "binomial"),
+  family = c("poisson", "binomial", "multinomial"),
   trials = NULL,
   innovations = c("gaussian", "t", "mixture", "sv"),
   latent_dynamics = c("rw", "ar1"),
@@ -21,20 +21,26 @@ fit_dynamic_model(
   forecast_trials = NULL,
   forecast_offset = NULL,
   offset = NULL,
+  baseline = "largest",
   verbose = FALSE,
   seed = NULL
 )
 }
 \arguments{
-\item{y}{Numeric vector of non-negative integer observations. For the
-Poisson family these are counts; for the binomial family these are the
-numbers of successes.}
+\item{y}{For the Poisson and binomial families a numeric vector of
+non-negative integer observations (counts, or numbers of successes). For
+the multinomial family an \eqn{n \times K} matrix (or data frame) of
+non-negative integer category counts with one row per time point; its
+column names, if any, are used as category labels.}
 
-\item{family}{Observation model, \code{"poisson"} (default) or \code{"binomial"}.}
+\item{family}{Observation model, \code{"poisson"} (default), \code{"binomial"} or
+\code{"multinomial"}.}
 
 \item{trials}{For \code{family = "binomial"}, the number of trials. Either a
 single number (recycled) or a vector the same length as \code{y}. Each \code{y} must
-not exceed its number of trials. Ignored for the Poisson family.}
+not exceed its number of trials. For the multinomial family the row
+totals of \code{y} are used and this argument must be left \code{NULL}; for the
+Poisson family it is ignored with a warning.}
 
 \item{innovations}{Distribution of the latent increments, one of
 \code{"gaussian"} (default), \code{"t"}, \code{"mixture"}, \code{"sv"}. See
@@ -55,16 +61,21 @@ supplied: the intercept gives the process a non-zero stationary mean
 \eqn{\mu / (1 - \rho)}, without which the zero-mean stationary assumption is
 rarely appropriate for a log-rate/logit series.}
 
-\item{zeros}{Zero handling for both families: \code{"none"} (default),
-\code{"inflated"} (time-constant zero inflation; see
-\code{\link[=structural_zero_prob]{structural_zero_prob()}}), or \code{"missing"} (observed zeros treated as
-missing data). \code{zero_inflation = TRUE} is shorthand for
-\code{zeros = "inflated"}. See Details.}
+\item{zeros}{Zero handling for the Poisson and binomial families: \code{"none"}
+(default), \code{"inflated"} (zero inflation with a time-constant gate-open
+probability; see \code{\link[=structural_zero_prob]{structural_zero_prob()}}), or \code{"missing"} (observed zeros
+treated as missing data). Must be \code{"none"} for the multinomial family. See
+Details.}
 
-\item{zero_inflation}{Logical convenience flag. If \code{TRUE}, sets
-\code{zeros = "inflated"}. Ignored if \code{zeros} is supplied explicitly.}
+\item{zero_inflation}{A single \code{TRUE} or \code{FALSE}. \code{TRUE} is shorthand for
+\code{zeros = "inflated"}; combining it with a different explicit \code{zeros} is an
+error. Unlike the \code{zero_inflation} argument of
+\code{\link[=simulate_dynamic_poisson]{simulate_dynamic_poisson()}} and \code{\link[=simulate_dynamic_binomial]{simulate_dynamic_binomial()}}, it is not
+a probability.}
 
-\item{prior}{A \code{\link[=dynamic_prior]{dynamic_prior()}} object giving the prior hyperparameters.}
+\item{prior}{A \code{\link[=dynamic_prior]{dynamic_prior()}} object giving the prior hyperparameters.
+For the multinomial family the same prior is applied independently to
+every non-baseline category.}
 
 \item{nsave}{Number of posterior draws to keep. Default \code{4000}.}
 
@@ -75,35 +86,64 @@ the sampler runs \code{nburn + nsave * thin} iterations in total and retains
 \code{nsave} draws. Default \code{1}.}
 
 \item{horizon}{Forecast horizon \code{H} (a non-negative integer). When
-\code{H >= 1}, forecasts are produced inside the sampler and stored for
-retrieval with \code{\link[=forecast.dynamic_fit]{forecast.dynamic_fit()}}; when \code{H = 0} (default) no forecast
-is produced.}
+\code{H >= 1}, an \code{H}-step forecast is simulated after sampling and stored for
+retrieval with \code{\link[=forecast.dynamic_fit]{forecast.dynamic_fit()}}; when \code{H = 0} (default) nothing is
+stored, and forecasts can still be computed later with
+\code{forecast(fit, horizon = H)}.}
 
-\item{forecast_trials}{For the binomial family, the number of trials in the
-forecast period (length 1, recycled, or length \code{horizon}). If omitted it
-defaults to the last observed trials count. Ignored when \code{horizon = 0}.}
+\item{forecast_trials}{For the binomial and multinomial families, the number
+of trials (binomial) or the total count per period (multinomial) over the
+forecast horizon (length 1, recycled, or length \code{horizon}). If omitted it
+defaults to the last observed number of trials (binomial) or the last
+non-zero row total (multinomial). Used only when \code{horizon >= 1}.}
 
-\item{forecast_offset}{Known per-period offset over the forecast horizon
-(length 1, recycled, or length \code{horizon}). Defaults to \code{0}. Ignored when
-\code{horizon = 0}.}
+\item{forecast_offset}{Known offset over the forecast horizon. For the
+Poisson and binomial families a vector of length 1 (recycled) or
+\code{horizon}; for the multinomial family a scalar, a length \eqn{K - 1}
+vector (one constant per non-baseline category) or an
+\eqn{H \times (K - 1)} matrix on the ALR scale (columns aligned with the
+non-baseline categories in their original order). Defaults to \code{0}, with a
+warning if \code{offset} is non-zero. Used only when \code{horizon >= 1}.}
 
 \item{offset}{Optional known per-observation offset on the linear-predictor
-scale (length 1 or \code{n}). For the Poisson family this is a log-exposure
+scale. For the Poisson family (length 1 or \code{n}) this is a log-exposure
 term, so the mean is \eqn{\exp(\mathrm{offset}_t + z_t)}; for the binomial
-family it shifts the logit. Default \code{NULL} (no offset).}
+family it shifts the logit. For the multinomial family it is a scalar, a
+length \eqn{K - 1} vector (one constant per non-baseline category) or an
+\eqn{n \times (K - 1)} matrix of per-category shifts on the ALR scale
+(columns aligned with the non-baseline categories in their original
+order; the baseline has no offset). Default \code{NULL} (no offset).}
+
+\item{baseline}{Multinomial family only: the baseline category, given as a
+column index or a column name of \code{y}, or \code{"largest"} (default) to use the
+category with the largest total count over the series (ties broken by
+column order). A category with many observations makes the ALR
+transform numerically well behaved. Note that the model is \emph{not}
+invariant to this choice: the latent dynamics are placed on the
+log-ratios relative to the baseline, so if the baseline's own share
+moves a lot every ALR series inherits that movement. A large category
+with a stable share is the natural choice. For the other families a
+non-default value is ignored with a warning.}
 
 \item{verbose}{Logical; print a progress bar. Default \code{FALSE}.}
 
-\item{seed}{Optional integer random seed for reproducibility.}
+\item{seed}{Optional random seed for reproducibility. The previous state of
+the global random number generator is restored after fitting.}
 }
 \value{
-An object of class \code{"dynamic_fit"}: a list with three elements, each
-holding a distinct kind of content.
+An object of class \code{"dynamic_fit"}: a list with three elements.
 \describe{
-\item{\code{draws}}{Posterior draws only -- a list of matrices/vectors with
-one row (or element) per stored draw:
+\item{\code{draws}}{Posterior draws only. For the Poisson and binomial
+families a list of matrices/vectors with one row (or element) per
+stored draw:
 \describe{
-\item{\code{z}, \code{sig2}}{Latent states and increment variances.}
+\item{\code{z}}{Latent states aligned with the observations
+(\verb{draws x n}).}
+\item{\code{z0}}{The initial latent state, one period before the first
+observation, which carries the \code{init_mean} / \code{init_var} prior.}
+\item{\code{sig2}}{Variance of the increment leading into each
+\eqn{z_t} (\verb{draws x n}); the first column is the increment from
+\code{z0}.}
 \item{\code{fitted}, \code{yrep}}{\strong{Unconditional} fitted means and
 posterior predictive replicates; under \code{zeros = "inflated"} they
 include the zero-inflation gate.}
@@ -111,64 +151,140 @@ include the zero-inflation gate.}
 \strong{conditional-on-gate-open} counterparts: the latent-implied
 mean, and a replicate drawn straight from the observation model.}
 \item{\code{gate}, \code{pi_open}}{Zero-inflation gate indicators and
-gate-open probability. For fits without zero inflation these are
-stored as placeholders: \code{gate} is the constant indicator
-\code{y > 0} and \code{pi_open} is \code{1}.}
-\item{\code{rho}, \code{mu}, \code{nu}, \code{innov_var}}{AR(1) coefficient,
-drift/intercept, Student-t degrees of freedom, and a
-representative innovation variance whose definition depends on
-\code{innovations}: the estimated constant increment variance
-\eqn{\sigma^2} for \code{"gaussian"}; the marginal increment variance
-for \code{"t"} (\eqn{\sigma^2 \nu / (\nu - 2)}) and \code{"mixture"}
-(\eqn{\sigma^2 \sum_h \eta_h \sigma_h^2}); and the average of
-the per-increment variances \eqn{\exp(h_t)} over the series for
-\code{"sv"}. For \code{"t"}, if a draw has \eqn{\nu \le 2} (possible only
-when \code{df_min <= 2}), the undefined variance factor is replaced by the
-convention \code{3}.}
+gate-open probability; \code{NULL} unless \code{zeros = "inflated"}.}
+\item{\code{rho}, \code{mu}}{AR(1) coefficient (\code{1} under the random walk)
+and drift/intercept (\code{0} unless \code{include_mu = TRUE}).}
+\item{\code{innov_var}}{A representative innovation variance whose
+definition depends on \code{innovations}: the estimated constant
+increment variance \eqn{\sigma^2} for \code{"gaussian"}; the marginal
+increment variance for \code{"t"} (\eqn{\sigma^2 \nu / (\nu - 2)}) and
+\code{"mixture"} (\eqn{\sigma^2 \sum_h \eta_h \sigma_h^2}); and the
+average of the per-increment variances \eqn{\exp(h_t)} over the
+in-sample transitions for \code{"sv"}. For \code{"t"}, if a draw has
+\eqn{\nu \le 2} (possible only when \code{df_min <= 2}), the undefined
+variance factor is replaced by the convention \code{3}.}
+\item{\code{scale}}{The overall innovation scale \eqn{\sigma^2}
+(\code{NULL} for \code{"sv"}).}
+\item{\code{nu}}{Student-t degrees of freedom (\code{NULL} unless
+\code{innovations = "t"}).}
+\item{\code{mix_weight}, \code{mix_var}}{Mixture weights and component
+variances (\eqn{\sigma^2 \sigma_h^2}), \verb{draws x mix_components}
+(\code{NULL} unless \code{innovations = "mixture"}). The components are
+exchangeable and not identified individually. Within each draw
+they are stored in order of increasing variance, which is a
+labelling convention rather than an identification, so
+per-component summaries are meaningful only if the components
+are clearly separated. Label-invariant quantities, such as
+\code{innov_var} and the forecasts, are unaffected.}
+\item{\code{sv_mu}, \code{sv_phi}, \code{sv_sigma}}{Level, persistence and
+volatility of the AR(1) log-variance process (\code{NULL} unless
+\code{innovations = "sv"}).}
 \item{\code{forecast_z}, \code{forecast_y}}{Latent and response forecasts
 when \code{horizon >= 1} (\code{NULL} otherwise); \code{forecast_y} is
 unconditional, i.e. includes the gate.}
 }
 Use \code{yrep}, not \code{yrep_open}, for posterior predictive checks; without
 zero inflation the conditional and unconditional pairs are identical.
-See \code{\link[=predict.dynamic_fit]{predict.dynamic_fit()}}.}
-\item{\code{data}}{The observed inputs: \code{y}, \code{trials}, the series length \code{n},
-and the resolved per-observation \code{offset}.}
+See \code{\link[=predict.dynamic_fit]{predict.dynamic_fit()}}.
+\cr\cr
+For the multinomial family the same components carry an extra
+trailing \emph{category} dimension, named by the category labels:
+latent quantities (\code{z}, \code{sig2}, \code{forecast_z}, \code{mix_weight},
+\code{mix_var}) are arrays with one slice per non-baseline category, and
+\code{z0}, \code{rho}, \code{mu}, \code{innov_var}, \code{scale}, \code{nu} and the \verb{sv_*}
+parameters are \verb{draws x (K - 1)} matrices; response-scale quantities
+(\code{fitted} -- the expected counts \eqn{N_t p_{t,k}} --, \code{yrep},
+\code{forecast_y}, and the additional \code{fitted_prob} / \code{forecast_prob}
+holding the category shares) are \verb{draws x time x K} arrays including
+the baseline, in the original column order. \code{fitted_open},
+\code{yrep_open}, \code{gate} and \code{pi_open} are \code{NULL}.}
+\item{\code{data}}{The observed inputs: \code{y}, \code{trials} (the row totals for the
+multinomial family), the series length \code{n}, and the resolved
+per-observation \code{offset}. For the multinomial family also \code{K}, the
+\code{categories} (column labels), and the \code{baseline} index and
+\code{baseline_name}.}
 \item{\code{spec}}{The model and MCMC specification: \code{family}, \code{innovations},
 \code{latent_dynamics}, \code{include_mu}, \code{zeros}, \code{prior}, \code{nsave}, \code{nburn},
-\code{thin}, \code{horizon}, and the fixed forecast-period inputs
-\code{forecast_offset} / \code{forecast_trials} (\code{NULL} when not applicable).}
+\code{thin}, \code{horizon}, and the forecast-period inputs \code{forecast_offset} /
+\code{forecast_trials} used for the stored forecast (\code{NULL} when not
+applicable).}
 }
 }
 \description{
 Fits a GMRF state-space model in which a latent trajectory \eqn{z_t} evolves
 as either a first-order random walk (\code{latent_dynamics = "rw"}, the default)
 or a stationary AR(1) process (\code{latent_dynamics = "ar1"}), and the
-observations are linked to it through a Poisson (log link) or binomial
-(logit link) observation model. See \link{DynCount-package} for an overview.
+observations are linked to it through a Poisson (log link), binomial
+(logit link) or multinomial (additive-log-ratio link) observation model.
+See \link{DynCount-package} for an overview.
 }
 \details{
+\strong{Estimation.} The model is estimated by Metropolis-within-Gibbs
+MCMC. The latent states are updated one site at a time by adaptive
+random-walk Metropolis steps that use their Gaussian Markov random field
+(GMRF) full conditionals. States without an observation (the initial
+state, structural zeros, zero-total rows) are drawn exactly from their
+Gaussian full conditionals. The
+innovation parameters, the drift/intercept \eqn{\mu} and the AR(1)
+coefficient \eqn{\rho} are updated by Gibbs steps (with a Metropolis step
+for the Student-t degrees of freedom).
+
+\strong{Multinomial family.} With \code{family = "multinomial"}, \code{y} is an
+\eqn{n \times K} matrix of category counts (rows = time, columns =
+categories, \eqn{K \ge 2}); the row totals \eqn{N_t} are treated as known
+trials. One category \eqn{b} is the \strong{baseline}, and the remaining
+\eqn{K - 1} categories each get their own latent additive-log-ratio (ALR)
+series \eqn{z_{t,k} = \log(p_{t,k} / p_{t,b})}, so that
+\deqn{y_t \sim \mathrm{Multinomial}(N_t, p_t), \qquad
+      p_{t,k} = \frac{\exp(o_{t,k} + z_{t,k})}{1 + \sum_{j \ne b}
+      \exp(o_{t,j} + z_{t,j})}, \qquad p_{t,b} = \frac{1}{1 + \sum_{j \ne b}
+      \exp(o_{t,j} + z_{t,j})},}
+with known offsets \eqn{o_{t,k}} (zero by default). The chosen latent
+dynamics, innovation structure and drift/intercept setting apply to every
+ALR series, but \emph{no parameters are shared across categories}. Each
+series has its own innovation variance (and, where relevant, degrees of
+freedom, mixture components or volatility path), its own \eqn{\rho} and
+\eqn{\mu}, and its own copy of \code{prior}. The series are coupled only
+through the multinomial likelihood, and each series is updated with the
+other categories held at their current values. A row with
+\eqn{N_t = 0} carries no information about the shares and is handled like
+a missing observation. Zero inflation is not available for this family
+(\code{zeros} must be \code{"none"}). Running time grows linearly in \eqn{K - 1}.
+
 \strong{Zero handling.} Under \code{zeros = "inflated"} a latent gate decides,
 for each observed zero, whether it is structural (gate closed) or an
 ordinary sampling zero produced by the Poisson/binomial process (gate
-open); the gate-open probability is a single time-constant parameter. See
-\code{\link[=structural_zero_prob]{structural_zero_prob()}}.
+open); the gate-open probability is a single parameter that is constant
+over time. See \code{\link[=structural_zero_prob]{structural_zero_prob()}}. Under \code{zeros = "missing"} the
+observed zeros are treated as missing values.
 
-\strong{Forecasting.} Forecasts are produced \emph{during} sampling: set
-\code{horizon = H} (a positive integer) and \code{H} extra latent states are appended
-to the state vector and sampled as missing values inside the MCMC. A response is
-drawn from the observation model at each sampled forecast state. The stored
-forecast draws are retrieved with \code{\link[=forecast.dynamic_fit]{forecast.dynamic_fit()}}. With the default
-\code{horizon = 0} no forecast is produced.
+\strong{Forecasting.} Forecasts are obtained by forward simulation from the
+posterior draws, so they can be computed after fitting for any horizon with
+\code{\link[=forecast.dynamic_fit]{forecast.dynamic_fit()}}. Setting \code{horizon = H} additionally simulates an
+\code{H}-step forecast right after sampling and stores it in the fit (under the
+same \code{seed}).
+
+\strong{Reproducibility.} With a \code{seed}, the sampler and the fit-time
+forecast run with that seed, and the previous state of the global random
+number generator is restored afterwards.
 }
 \examples{
-set.seed(1)
-sim <- simulate_dynamic_poisson(n = 60, sigma = 0.2, log_rate0 = 2)
-fit <- fit_dynamic_model(sim$y, family = "poisson", nsave = 300, nburn = 200)
+sim <- simulate_dynamic_poisson(n = 60, sigma = 0.2, log_rate0 = 2, seed = 1)
+fit <- fit_dynamic_model(sim$y, family = "poisson", nsave = 300, nburn = 200,
+                         seed = 1)
 summary(fit)
+forecast(fit, horizon = 5)
+
+# multinomial choice counts: three categories, baseline chosen automatically
+simm <- simulate_dynamic_multinomial(n = 40, sigma = 0.15, trials = 100,
+                                     alr0 = c(-1, -0.5), seed = 2)
+fitm <- fit_dynamic_model(simm$y, family = "multinomial",
+                          nsave = 200, nburn = 100, seed = 2)
+fitm
+summary(fitm)$params
 
 }
 \seealso{
-\code{\link[=dynamic_prior]{dynamic_prior()}}, \code{\link[=forecast.dynamic_fit]{forecast.dynamic_fit()}}, \code{\link[=plot_fitted]{plot_fitted()}},
-\code{\link[=structural_zero_prob]{structural_zero_prob()}}
+\code{\link[=dynamic_prior]{dynamic_prior()}}, \code{\link[=forecast.dynamic_fit]{forecast.dynamic_fit()}}, \code{\link[=predict.dynamic_fit]{predict.dynamic_fit()}},
+\code{\link[=plot_fitted]{plot_fitted()}}, \code{\link[=structural_zero_prob]{structural_zero_prob()}}, \code{\link[=simulate_dynamic_multinomial]{simulate_dynamic_multinomial()}}
 }

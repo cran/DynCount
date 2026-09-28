@@ -4,24 +4,32 @@
 \alias{plot_latent}
 \title{Plot the fitted latent trajectory}
 \usage{
-plot_latent(object, level = 0.95, ...)
+plot_latent(object, level = 0.95, category = NULL, ...)
 }
 \arguments{
 \item{object}{A \code{"dynamic_fit"} object.}
 
 \item{level}{Credible level for the band. Default \code{0.95}.}
 
-\item{...}{Passed to \code{\link[graphics:plot.default]{graphics::plot()}}.}
+\item{category}{Multinomial family only: which categories to draw (names
+or indices among the non-baseline categories for \code{\link[=plot_latent]{plot_latent()}}; among
+all \code{K} categories for \code{\link[=plot_fitted]{plot_fitted()}} and \code{\link[=plot_forecast]{plot_forecast()}}). \code{NULL}
+(default) draws one panel per category.}
+
+\item{...}{Passed to \code{\link[graphics:plot.default]{graphics::plot()}}; may override the default \code{main},
+\code{xlab}, \code{ylab}, \code{ylim} and other plot arguments.}
 }
 \value{
-Invisibly, the summary data frame used for plotting.
+Invisibly, the summary data frame used for plotting (in long format
+with a \code{category} column for the multinomial family).
 }
 \description{
 Shows the posterior median of the latent state (log-rate for the Poisson
-family, logit for the binomial family) with a credible band.
+family, logit for the binomial family, one additive-log-ratio series per
+non-baseline category for the multinomial family) with a credible band.
 }
 \examples{
 sim <- simulate_dynamic_poisson(60, 0.2, 2, seed = 1)
-fit <- fit_dynamic_model(sim$y, nsave = 300, nburn = 200)
+fit <- fit_dynamic_model(sim$y, nsave = 300, nburn = 200, seed = 1)
 plot_latent(fit)
 }

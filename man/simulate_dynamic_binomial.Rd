@@ -40,7 +40,8 @@ Default \code{0}.}
 probability is \eqn{\mathrm{logit}^{-1}(\mathrm{offset}_t + z_t)}.
 Default \code{0}.}
 
-\item{seed}{Optional random seed.}
+\item{seed}{Optional random seed. The previous state of the global random
+number generator is restored afterwards.}
 }
 \value{
 A list with components \code{y} (successes), \code{trials}, \code{logit} (latent

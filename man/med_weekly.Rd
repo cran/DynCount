@@ -5,10 +5,11 @@
 \alias{med_weekly}
 \title{Weekly Mediterranean crossings (Mediterranean example)}
 \format{
-A data frame with 494 rows and 2 variables:
+A data frame with 494 rows and 3 variables:
 \describe{
 \item{week}{ISO week label, e.g. \code{"2015-W40"}.}
 \item{count}{Non-negative integer count of weekly crossings.}
+\item{date}{The Monday of the ISO week, as a \code{Date}.}
 }
 }
 \source{
@@ -21,19 +22,17 @@ med_weekly
 }
 \description{
 A longer weekly count series of irregular sea crossings on the Mediterranean
-route, beginning in autumn 2015. The counts are larger in magnitude with
-fewer zeros than \link{uk_weekly}, which makes the series useful for the plain
-Poisson model and the robust (Student-t) and stochastic-volatility
-innovation structures. The series is used in the irregular-migration
-application of Zens and Bijak (2026).
+route, covering the ISO weeks 2015-W40 to 2025-W11 (494 weeks). The counts
+are larger in magnitude with fewer zeros than \link{uk_weekly}. The series is
+used in the irregular-migration application of Zens and Bijak (2026).
 }
 \examples{
-data(med_weekly)
 summary(med_weekly$count)
+plot(med_weekly$date, med_weekly$count, type = "h", xlab = "week", ylab = "crossings")
 }
 \references{
 Zens, G. and Bijak, J. (2026). Dynamic Count Models with Flexible Innovation
 Processes for Irregular Maritime Migration. \emph{The Annals of Applied
-Statistics}. \doi{10.1214/26-AOAS2171}.
+Statistics}, 20(2), 1671--1690. \doi{10.1214/26-AOAS2171}.
 }
 \keyword{datasets}

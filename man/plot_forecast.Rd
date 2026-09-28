@@ -4,14 +4,33 @@
 \alias{plot_forecast}
 \title{Plot observed history, fitted values and forecast with uncertainty}
 \usage{
-plot_forecast(object, level = 0.95, ...)
+plot_forecast(
+  object,
+  level = 0.95,
+  category = NULL,
+  horizon = NULL,
+  forecast_offset = NULL,
+  forecast_trials = NULL,
+  seed = NULL,
+  ...
+)
 }
 \arguments{
-\item{object}{A \code{"dynamic_fit"} object fitted with \code{horizon >= 1}.}
+\item{object}{A \code{"dynamic_fit"} object.}
 
 \item{level}{Credible level. Default \code{0.95}.}
 
-\item{...}{Passed to \code{\link[graphics:plot.default]{graphics::plot()}}.}
+\item{category}{Multinomial family only: which categories to draw (names
+or indices among the non-baseline categories for \code{\link[=plot_latent]{plot_latent()}}; among
+all \code{K} categories for \code{\link[=plot_fitted]{plot_fitted()}} and \code{\link[=plot_forecast]{plot_forecast()}}). \code{NULL}
+(default) draws one panel per category.}
+
+\item{horizon, forecast_offset, forecast_trials, seed}{Passed to
+\code{\link[=forecast.dynamic_fit]{forecast.dynamic_fit()}}. With the defaults, the forecast stored in the
+fit is plotted.}
+
+\item{...}{Passed to \code{\link[graphics:plot.default]{graphics::plot()}}; may override the default \code{main},
+\code{xlab}, \code{ylab}, \code{ylim} and other plot arguments.}
 }
 \value{
 Invisibly, the \code{"dynamic_forecast"} object.
@@ -19,11 +38,12 @@ Invisibly, the \code{"dynamic_forecast"} object.
 \description{
 Shows the observed series together with the in-sample fitted mean (median and
 credible band) and the forecast (median and credible band) over the forecast
-horizon. The forecast draws are those produced during sampling, so the model
-must have been fitted with \code{horizon >= 1} (see \code{\link[=forecast.dynamic_fit]{forecast.dynamic_fit()}}).
+horizon. The forecast is the one stored in the fit, or a new one computed
+with \code{\link[=forecast.dynamic_fit]{forecast.dynamic_fit()}} when \code{horizon} (or another forecast input) is
+supplied. For the multinomial family, one panel per category.
 }
 \examples{
 sim <- simulate_dynamic_poisson(60, 0.2, 2, seed = 1)
-fit <- fit_dynamic_model(sim$y, nsave = 300, nburn = 200, horizon = 12)
-plot_forecast(fit)
+fit <- fit_dynamic_model(sim$y, nsave = 300, nburn = 200, seed = 1)
+plot_forecast(fit, horizon = 12)
 }

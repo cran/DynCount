@@ -53,20 +53,21 @@ update_innovations <- function(innovations, state, dz, prior, iter) {
     state$sig2  <- rep(v, n)
 
   } else if (innovations == "t") {
-    # Student-t scale mixture. `scale` is the overall variance; `omega` are the
-    # per-increment Gamma mixing weights; `nu` (degrees of freedom) is updated
-    # by an adaptive random-walk Metropolis step on the log scale.
+    # Student-t scale mixture: dz_t | omega_t ~ N(0, scale / omega_t) with
+    # omega_t ~ Gamma(nu / 2, nu / 2). `scale` is the overall variance and
+    # `omega` are the per-increment mixing weights. The update is partially
+    # collapsed: (1) scale | omega, dz; (2) nu | scale, dz with omega
+    # integrated out, i.e. dz_t / sqrt(scale) ~ t_nu, by an adaptive random-walk
+    # Metropolis step on log(nu); (3) omega | nu, scale, dz. Step (3) must follow
+    # step (2), so that the pair (nu, omega) is a draw from its joint
+    # conditional given scale; drawing nu given omega instead mixes very slowly
+    # because nu and omega are strongly dependent a posteriori.
     scale <- 1 / stats::rgamma(1, a0 + 0.5 * n, b0 + 0.5 * sum(state$omega * dz^2))
-    state$omega <- stats::rgamma(n, 0.5 + state$nu / 2,
-                                 state$nu / 2 + 0.5 * (dz^2 / scale))
-    state$scale <- scale
-    state$sig2  <- scale / state$omega
+    u <- dz / sqrt(scale)
+    lt <- function(nu) sum(stats::dt(u, df = nu, log = TRUE))
 
     nu_prop <- exp(stats::rnorm(1, log(state$nu), sqrt(state$tau_nu)))
-    ll_diff <- sum(stats::dgamma(state$omega, shape = nu_prop / 2,
-                                 rate = nu_prop / 2, log = TRUE)) -
-               sum(stats::dgamma(state$omega, shape = state$nu / 2,
-                                 rate = state$nu / 2, log = TRUE))
+    ll_diff <- lt(nu_prop) - lt(state$nu)
     # prior: nu - df_min ~ Exp(rate = 1 / df_mean_excess)
     rate <- 1 / prior$df_mean_excess
     pr_diff <- stats::dexp(nu_prop - prior$df_min, rate = rate, log = TRUE) -
@@ -80,10 +81,21 @@ update_innovations <- function(innovations, state, dz, prior, iter) {
     # target a 0.44 acceptance rate (univariate single-site RW-MH optimum)
     state$tau_nu <- exp(log(state$tau_nu) + iter^(-0.6) * (alpha - 0.44))
 
+    state$omega <- stats::rgamma(n, 0.5 + state$nu / 2,
+                                 state$nu / 2 + 0.5 * u^2)
+    state$scale <- scale
+    state$sig2  <- scale / state$omega
+
   } else if (innovations == "mixture") {
-    # Finite scale mixture of normals (K components) using the Gumbel-max trick
+    # Finite scale mixture of normals (`mix_components` components) using the
+    # Gumbel-max trick
     # for the categorical allocation, with Dirichlet weights.
     H <- prior$mix_components
+    # component-variance hyperparameters are kept separate from the (vague)
+    # prior on the overall scale; fall back to the historical values for
+    # prior objects created before `mix_var_*` existed.
+    am <- prior$mix_var_shape %||% 2.5
+    bm <- prior$mix_var_rate  %||% 0.5
     scale <- 1 / stats::rgamma(1, a0 + 0.5 * n, b0 + 0.5 * sum(state$omega * dz^2))
     pp <- sapply(seq_len(H), function(h)
       stats::dnorm(dz, 0, sqrt(scale * state$sig2_h[h]), log = TRUE))
@@ -92,8 +104,8 @@ update_innovations <- function(innovations, state, dz, prior, iter) {
     counts <- tabulate(vmix, H)
     state$eta <- rdirichlet1(prior$mix_concentration + counts)
     state$sig2_h <- sapply(seq_len(H), function(h)
-      1 / stats::rgamma(1, a0 + 0.5 * counts[h],
-                        b0 + 0.5 * sum((dz[vmix == h])^2 / scale)))
+      1 / stats::rgamma(1, am + 0.5 * counts[h],
+                        bm + 0.5 * sum((dz[vmix == h])^2 / scale)))
     state$scale <- scale
     state$omega <- 1 / state$sig2_h[vmix]
     state$sig2 <- scale / state$omega

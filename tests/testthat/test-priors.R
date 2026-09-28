@@ -1,8 +1,10 @@
 test_that("dynamic_prior has documented defaults", {
   p <- dynamic_prior()
   expect_s3_class(p, "dynamic_prior")
-  expect_equal(p$var_shape, 2.5)
-  expect_equal(p$var_rate, 0.5)
+  expect_equal(p$var_shape, 0.01)
+  expect_equal(p$var_rate, 0.01)
+  expect_equal(p$mix_var_shape, 2.5)
+  expect_equal(p$mix_var_rate, 0.5)
   expect_equal(p$df_min, 3)
   expect_equal(p$df_mean_excess, 6)
   expect_equal(p$mix_components, 2L)
@@ -30,6 +32,35 @@ test_that("dynamic_prior validates its arguments", {
   expect_error(dynamic_prior(mix_components = 0))
   expect_error(dynamic_prior(mix_components = 2.7))
   expect_error(dynamic_prior(zi_open_a = -2))
+  expect_error(dynamic_prior(mix_var_shape = 0))
+  expect_error(dynamic_prior(mix_var_rate = -1))
+})
+
+test_that("var_rate controls how far a smooth series can shrink sigma", {
+  # For a very smooth series (sigma = 0.03) the rate of the inverse-gamma
+  # prior matters: it acts like a sum of squared increments of 2 * var_rate.
+  # A smaller rate must allow a smaller posterior innovation SD, and an
+  # informative IG(2.5, 0.5) prior must give a larger one.
+  sim <- simulate_dynamic_poisson(n = 150, sigma = 0.03, log_rate0 = 3, seed = 31)
+  sd_of <- function(pr) {
+    fit <- fit_dynamic_model(sim$y, prior = pr, nsave = 600, nburn = 300, seed = 31)
+    median(sqrt(fit$draws$innov_var))
+  }
+  s_default <- sd_of(dynamic_prior())
+  s_small   <- sd_of(dynamic_prior(var_rate = 1e-4))
+  s_inform  <- sd_of(dynamic_prior(var_shape = 2.5, var_rate = 0.5))
+  expect_lt(s_small, s_default)
+  expect_lt(s_default, s_inform)
+  expect_lt(s_default, 0.1)
+})
+
+test_that("the mixture structure uses its own component-variance prior", {
+  sim <- simulate_dynamic_poisson(n = 60, sigma = 0.2, log_rate0 = 2, seed = 32)
+  pr <- dynamic_prior(mix_var_shape = 5, mix_var_rate = 1)
+  fit <- fit_dynamic_model(sim$y, innovations = "mixture", prior = pr,
+                           nsave = 150, nburn = 75, seed = 32)
+  expect_equal(fit$spec$prior$mix_var_shape, 5)
+  expect_true(all(is.finite(fit$draws$innov_var)))
 })
 
 test_that("a custom prior flows through to the fit spec", {
@@ -49,5 +80,5 @@ test_that("a tighter innovation-variance prior shrinks the posterior", {
   tight <- fit_dynamic_model(sim$y, family = "poisson",
                              prior = dynamic_prior(var_shape = 20, var_rate = 0.05),
                              nsave = 450, nburn = 225, seed = 21)
-  expect_lt(mean(tight$draws$innov_var), mean(loose$draws$innov_var) * 1.5)
+  expect_lt(mean(tight$draws$innov_var), mean(loose$draws$innov_var))
 })

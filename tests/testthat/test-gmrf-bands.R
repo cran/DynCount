@@ -66,5 +66,5 @@ test_that("a nonzero init_mean anchors z[1] under AR(1) dynamics too", {
   fit <- fit_dynamic_model(sim$y, latent_dynamics = "ar1",
                            prior = dynamic_prior(init_mean = 5, init_var = 1e-3),
                            nsave = 300, nburn = 225, seed = 11)
-  expect_lt(abs(mean(fit$draws$z[, 1]) - 5), 0.5)
+  expect_lt(abs(mean(fit$draws$z0) - 5), 0.5)
 })

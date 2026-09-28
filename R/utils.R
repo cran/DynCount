@@ -63,32 +63,41 @@ gmrf_bands <- function(w, rho, mu, v0, m0, N) {
   list(diag = d, off = off, b = b)
 }
 
-#' Numerically stable log-sum-exp
-#' @param x numeric vector
-#' @return `log(sum(exp(x)))` computed stably
+#' Row-wise numerically stable log-sum-exp
+#' @param E numeric matrix
+#' @return length-`nrow(E)` vector with `log(rowSums(exp(E)))`
 #' @keywords internal
 #' @noRd
-log_sum_exp <- function(x) {
-  m <- max(x)
-  if (!is.finite(m)) return(m)
-  m + log(sum(exp(x - m)))
+row_log_sum_exp <- function(E) {
+  m <- E[cbind(seq_len(nrow(E)), max.col(E, ties.method = "first"))]
+  m + log(rowSums(exp(E - m)))
 }
 
-#' Numerically stable log of the mean of exp(x)
-#' @param x numeric vector
-#' @return `log(mean(exp(x)))` computed stably
+#' Evaluate `code` with a temporary random seed
+#'
+#' With `seed = NULL` the code is evaluated as is. Otherwise the global RNG
+#' state is saved, the seed is set, `code` is evaluated and the previous state
+#' is restored on exit, so a `seed` argument never alters the user's random
+#' number stream (the same semantics as `withr::with_seed()`).
 #' @keywords internal
 #' @noRd
-log_mean_exp <- function(x) {
-  log_sum_exp(x) - log(length(x))
-}
-
-#' Stable log(exp(a) + exp(b))
-#' @keywords internal
-#' @noRd
-logspace_add <- function(a, b) {
-  m <- pmax(a, b)
-  ifelse(is.finite(m), m + log(exp(a - m) + exp(b - m)), m)
+with_seed <- function(seed, code) {
+  if (is.null(seed)) return(code)
+  if (!is.numeric(seed) || length(seed) != 1L || !is.finite(seed)) {
+    stop("`seed` must be a single number or NULL.", call. = FALSE)
+  }
+  genv <- globalenv()
+  had_seed <- exists(".Random.seed", envir = genv, inherits = FALSE)
+  old_seed <- if (had_seed) get(".Random.seed", envir = genv, inherits = FALSE)
+  on.exit({
+    if (had_seed) {
+      assign(".Random.seed", old_seed, envir = genv)
+    } else if (exists(".Random.seed", envir = genv, inherits = FALSE)) {
+      rm(".Random.seed", envir = genv)
+    }
+  }, add = TRUE)
+  set.seed(seed)
+  code
 }
 
 #' Draw from a Gumbel(0, 1) distribution (base-R replacement for
@@ -182,4 +191,88 @@ check_count0 <- function(x, name) {
          call. = FALSE)
   }
   as.integer(x)
+}
+
+#' Additive-log-ratio (ALR) to probability transform
+#'
+#' Maps an `n x (K - 1)` matrix of ALR linear predictors (one column per
+#' non-baseline category, in their original column order) to the `n x K`
+#' matrix of category probabilities, with the baseline column inserted at
+#' position `baseline`. Row-wise softmax of `(eta, 0)`, computed stably.
+#'
+#' @param eta numeric `n x (K - 1)` matrix (a vector is treated as one row).
+#' @param baseline integer index of the baseline category in `1..K`.
+#' @return an `n x K` matrix whose rows sum to one.
+#' @keywords internal
+#' @noRd
+alr_to_prob <- function(eta, baseline) {
+  if (is.null(dim(eta))) eta <- matrix(eta, nrow = 1L)
+  n <- nrow(eta); J <- ncol(eta); K <- J + 1L
+  E <- matrix(0, n, K)
+  E[, -baseline] <- eta
+  m <- apply(E, 1L, max)
+  W <- exp(E - m)
+  W / rowSums(W)
+}
+
+#' Row-wise multinomial draws
+#'
+#' One multinomial draw per row of `prob` with the corresponding number of
+#' trials. Returns a `K x n` matrix (the [stats::rmultinom()] orientation);
+#' transpose for `n x K`.
+#' @keywords internal
+#' @noRd
+rmultinom_rows <- function(size, prob) {
+  n <- nrow(prob); K <- ncol(prob)
+  out <- matrix(0L, K, n)
+  for (t in seq_len(n)) {
+    if (size[t] > 0) out[, t] <- stats::rmultinom(1L, size[t], prob[t, ])
+  }
+  out
+}
+
+#' Vectorised multinomial draws (one draw per row of `prob`)
+#'
+#' Exact sequential-binomial construction: category `c` receives
+#' `Binomial(remaining, p_c / (1 - p_1 - ... - p_{c-1}))`, and the last
+#' category the remainder. Returns an `n x K` matrix.
+#' @param size length-`n` vector of totals.
+#' @param prob `n x K` matrix of probabilities (rows sum to one).
+#' @keywords internal
+#' @noRd
+rmultinom_vec <- function(size, prob) {
+  n <- nrow(prob); K <- ncol(prob)
+  out <- matrix(0, n, K)
+  rem  <- size
+  prem <- rep(1, n)
+  for (c in seq_len(K - 1L)) {
+    pc <- ifelse(prem > 0, prob[, c] / prem, 0)
+    pc <- pmin(pmax(pc, 0), 1)
+    out[, c] <- stats::rbinom(n, rem, pc)
+    rem  <- rem - out[, c]
+    prem <- prem - prob[, c]
+  }
+  out[, K] <- rem
+  out
+}
+
+#' Long-format posterior summary of a draws x time x category array
+#'
+#' Applies [summarise_draws()] to every category slice and stacks the results
+#' with `index` (the time / horizon column) and `category` columns in front.
+#' A plain matrix is treated as a single unnamed category.
+#' @keywords internal
+#' @noRd
+summarise_draws_long <- function(draws, probs = c(0.025, 0.5, 0.975),
+                                 index_name = "time") {
+  if (length(dim(draws)) == 2L) draws <- array(draws, c(dim(draws), 1L))
+  cats <- dimnames(draws)[[3L]] %||% as.character(seq_len(dim(draws)[3L]))
+  out <- do.call(rbind, lapply(seq_along(cats), function(k) {
+    s <- summarise_draws(matrix(draws[, , k], dim(draws)[1L], dim(draws)[2L]), probs)
+    cbind(data.frame(index = seq_len(dim(draws)[2L]), category = cats[k],
+                     stringsAsFactors = FALSE), s)
+  }))
+  names(out)[1L] <- index_name
+  rownames(out) <- NULL
+  out
 }

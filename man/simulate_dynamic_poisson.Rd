@@ -35,7 +35,8 @@ Default \code{0}.}
 \item{offset}{Known log-exposure offset (length 1 or \code{n}); the Poisson mean
 is \eqn{\exp(\mathrm{offset}_t + z_t)}. Default \code{0}.}
 
-\item{seed}{Optional random seed.}
+\item{seed}{Optional random seed. The previous state of the global random
+number generator is restored afterwards.}
 }
 \value{
 A list with components \code{y} (observed counts), \code{log_rate} (the latent

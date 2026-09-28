@@ -1,11 +1,13 @@
-#' Specify priors for a dynamic count / binomial model
+#' Specify priors for a dynamic model
 #'
 #' Builds the prior hyperparameters used by [fit_dynamic_model()]. Called with
 #' no arguments it returns weakly informative defaults.
 #'
 #' @details
 #' The model places a GMRF latent process on the series \eqn{z_t} (a log-rate
-#' for the Poisson family, a logit for the binomial family): either a first-order
+#' for the Poisson family, a logit for the binomial family, and one
+#' additive-log-ratio series per non-baseline category for the multinomial
+#' family): either a first-order
 #' random walk (`latent_dynamics = "rw"`) or an AR(1) process
 #' (`latent_dynamics = "ar1"`). The increments
 #' \eqn{\varepsilon_t = z_t - \mu - \rho\, z_{t-1}} (with \eqn{\rho = 1} for the
@@ -17,7 +19,24 @@
 #' variance \eqn{\sigma^2} (or, for the `"t"`/`"mixture"` structures, the
 #' overall scale) has an inverse-gamma prior
 #' \deqn{\sigma^2 \sim \mathrm{InvGamma}(\code{var\_shape}, \code{var\_rate}).}
-#' Smaller `var_rate` gives a smoother (more strongly shrunk) latent path.
+#' The default \eqn{\mathrm{InvGamma}(0.01, 0.01)} is weakly informative for
+#' typical increment standard deviations, but it is not scale-free. For very
+#' smooth or short series, with increment standard deviations of a few
+#' hundredths, the results can be sensitive to this prior. In that regime, check the
+#' sensitivity of the results to a smaller `var_rate` (which lets \eqn{\sigma}
+#' become smaller) and expect slower mixing, because a nearly constant latent
+#' path and a small \eqn{\sigma} are strongly dependent a posteriori.
+#' In the multinomial family the same prior is applied independently to every 
+#' non-baseline category.
+#'
+#' \strong{Mixture component variances (`innovations = "mixture"`).} The
+#' relative variances of the mixture components multiply the overall scale
+#' and are given their own \eqn{\mathrm{InvGamma}(\code{mix\_var\_shape},
+#' \code{mix\_var\_rate})} prior (default \eqn{\mathrm{InvGamma}(2.5, 0.5)}).
+#' They are kept moderately informative on purpose, as with a vague prior an
+#' empty component would be drawn from an extremely heavy-tailed
+#' distribution and the split between the overall scale and the component
+#' variances is only weakly identified.
 #'
 #' \strong{Student-t degrees of freedom (`innovations = "t"`).} The degrees of
 #' freedom are modelled as \eqn{\nu = \code{df\_min} + E}, where
@@ -28,11 +47,14 @@
 #'
 #' \strong{Scale mixture (`innovations = "mixture"`).} The mixture uses
 #' `mix_components` variance components, each with an
-#' \eqn{\mathrm{InvGamma}(\code{var\_shape}, \code{var\_rate})} prior, and
-#' symmetric Dirichlet weights with concentration `mix_concentration`.
+#' \eqn{\mathrm{InvGamma}(\code{mix\_var\_shape}, \code{mix\_var\_rate})}
+#' prior (see above), and symmetric Dirichlet weights with concentration
+#' `mix_concentration`.
 #'
 #' \strong{Stochastic volatility (`innovations = "sv"`).} The log-variance
-#' AR(1) priors are delegated to \pkg{stochvol}. Pass a prior specification
+#' \eqn{h_t} of the increments follows
+#' \eqn{h_t = \mu_h + \phi (h_{t-1} - \mu_h) + \sigma_h \eta_t}, and its
+#' priors are delegated to \pkg{stochvol}. Pass a prior specification
 #' created with [stochvol::specify_priors()] via `sv_prior`, or leave it `NULL`
 #' to use the \pkg{stochvol} defaults.
 #'
@@ -46,9 +68,8 @@
 #' state follows \eqn{z_t = \mu + \rho\, z_{t-1} + \varepsilon_t}, the
 #' coefficient \eqn{\rho} is given a Gaussian prior
 #' \eqn{\rho \sim \mathrm{N}(\code{ar\_rho\_mean}, \code{ar\_rho\_sd}^2)},
-#' truncated to the stationary region \eqn{\rho \in (-1, 1)}, and is sampled
-#' jointly with \eqn{\mu} by an exact conjugate Gibbs draw (see
-#' [DynCount-package]). AR(1) always carries an intercept
+#' truncated to the stationary region \eqn{\rho \in (-1, 1)}. AR(1) always
+#' carries an intercept
 #' (`include_mu = TRUE`). Under `latent_dynamics = "rw"` the coefficient is
 #' fixed at \eqn{\rho = 1} and this prior is unused.
 #'
@@ -62,29 +83,31 @@
 #' \strong{Initial state.} A proper, fixed
 #' \eqn{\mathrm{N}(\code{init\_mean}, \code{init\_var})} prior (default
 #' \eqn{N(0, 100)}) anchors the otherwise-improper GMRF on the first latent
-#' state, under both `"rw"` and `"ar1"` dynamics; keeping it free of
-#' \eqn{(\mu, \rho)} is what makes their update conjugate (see
-#' [DynCount-package]). With the diffuse default the initial state is
+#' state, under both `"rw"` and `"ar1"` dynamics. With the diffuse default
+#' the initial state is
 #' effectively determined by the data.
 #'
 #' @param var_shape Shape of the inverse-gamma prior on the innovation
-#'   variance/scale. Default `2.5`.
+#'   variance/scale. Default `0.01`.
 #' @param var_rate Rate of the inverse-gamma prior on the innovation
-#'   variance/scale. Default `0.5`.
+#'   variance/scale. Default `0.01`.
 #' @param df_min Lower bound for the Student-t degrees of freedom. Default `3`.
 #' @param df_mean_excess Prior mean of \eqn{\nu - \code{df\_min}}. Default `6`.
 #' @param mix_components Number of components in the scale-mixture innovation
 #'   structure. Default `2`.
 #' @param mix_concentration Symmetric Dirichlet concentration for the mixture
 #'   weights. Default `1`.
+#' @param mix_var_shape,mix_var_rate Shape and rate of the inverse-gamma prior
+#'   on the relative variance of each mixture component (used only when
+#'   `innovations = "mixture"`). Defaults `2.5` and `0.5`.
 #' @param sv_prior Optional \pkg{stochvol} prior specification for the
 #'   stochastic-volatility innovation structure. Default `NULL`.
 #' @param zi_open_a,zi_open_b Beta prior parameters for the gate-open
 #'   probability in zero-inflated models. Default `1` and `1`.
 #' @param ar_rho_mean,ar_rho_sd Mean and standard deviation of the Gaussian
 #'   prior on the AR(1) coefficient \eqn{\rho} (used only when
-#'   `latent_dynamics = "ar1"`). The conjugate Gibbs update truncates
-#'   \eqn{\rho} to the stationary region \eqn{\rho \in (-1, 1)}. Defaults `0`
+#'   `latent_dynamics = "ar1"`). The prior is truncated to the stationary
+#'   region \eqn{\rho \in (-1, 1)}. Defaults `0`
 #'   and `1`.
 #' @param mu_mean,mu_sd Mean and standard deviation of the Gaussian prior on the
 #'   drift/intercept \eqn{\mu} (used only when `include_mu = TRUE`). Defaults
@@ -99,17 +122,19 @@
 #' # Defaults
 #' dynamic_prior()
 #'
-#' # Smoother latent path and heavier-tailed t innovations
-#' dynamic_prior(var_rate = 0.1, df_min = 2, df_mean_excess = 3)
+#' # An informative variance prior and heavier-tailed t innovations
+#' dynamic_prior(var_shape = 2.5, var_rate = 0.5, df_min = 2, df_mean_excess = 3)
 #'
 #' @seealso [fit_dynamic_model()]
 #' @export
-dynamic_prior <- function(var_shape = 2.5,
-                          var_rate = 0.5,
+dynamic_prior <- function(var_shape = 0.01,
+                          var_rate = 0.01,
                           df_min = 3,
                           df_mean_excess = 6,
                           mix_components = 2,
                           mix_concentration = 1,
+                          mix_var_shape = 2.5,
+                          mix_var_rate = 0.5,
                           sv_prior = NULL,
                           zi_open_a = 1,
                           zi_open_b = 1,
@@ -124,6 +149,7 @@ dynamic_prior <- function(var_shape = 2.5,
     df_min > 0, df_mean_excess > 0,
     mix_components >= 1, mix_components == round(mix_components),
     mix_concentration > 0,
+    mix_var_shape > 0, mix_var_rate > 0,
     zi_open_a > 0, zi_open_b > 0,
     is.finite(ar_rho_mean), ar_rho_sd > 0,
     is.finite(mu_mean), mu_sd > 0,
@@ -137,6 +163,8 @@ dynamic_prior <- function(var_shape = 2.5,
       df_mean_excess = df_mean_excess,
       mix_components = as.integer(mix_components),
       mix_concentration = mix_concentration,
+      mix_var_shape = mix_var_shape,
+      mix_var_rate = mix_var_rate,
       sv_prior = sv_prior,
       zi_open_a = zi_open_a,
       zi_open_b = zi_open_b,
@@ -158,8 +186,10 @@ print.dynamic_prior <- function(x, ...) {
               x$var_shape, x$var_rate))
   cat(sprintf("  t degrees of freedom = %g + Exp(mean = %g)\n",
               x$df_min, x$df_mean_excess))
-  cat(sprintf("  mixture: %d components, Dirichlet concentration = %g\n",
+  cat(sprintf("  mixture: %d components, Dirichlet concentration = %g,\n",
               x$mix_components, x$mix_concentration))
+  cat(sprintf("           component variances ~ InvGamma(shape = %g, rate = %g)\n",
+              x$mix_var_shape %||% 2.5, x$mix_var_rate %||% 0.5))
   cat(sprintf("  zero-inflation gate-open prob ~ Beta(%g, %g)\n",
               x$zi_open_a, x$zi_open_b))
   cat(sprintf("  AR(1) rho ~ N(mean = %g, sd = %g) truncated to (-1, 1)  [ar1 only]\n",

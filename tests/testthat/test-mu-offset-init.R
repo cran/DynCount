@@ -116,7 +116,7 @@ test_that("the initial-state prior anchors the first latent state (RW)", {
   fit <- fit_dynamic_model(sim$y,
                            prior = dynamic_prior(init_mean = 5, init_var = 1e-3),
                            nsave = 300, nburn = 150, seed = 8)
-  expect_lt(abs(mean(fit$draws$z[, 1]) - 5), 0.5)
+  expect_lt(abs(mean(fit$draws$z0) - 5), 0.5)
 })
 
 test_that("AR(1) with the fixed diffuse initial prior runs and gives finite draws", {

@@ -15,18 +15,38 @@
 }
 \value{
 An object of class \code{"summary.dynamic_fit"} containing posterior
-summaries of the global parameters (the innovation standard deviation
-\code{innov_sd} -- the estimated SD for \code{"gaussian"} innovations, the marginal
-SD for \code{"t"} and \code{"mixture"}, and the series-average SD for
-\code{"sv"} -- and where relevant the t degrees of freedom, the AR(1)
-coefficient, the drift/intercept, and the zero-inflation gate-open
-probability) and the fitted-value summary.
+summaries of the global parameters (\code{params}, one row per parameter) and
+of the fitted values (\code{fitted}). The rows of \code{params} and the draws they
+summarise are
+\describe{
+\item{\code{innov_sd}}{\code{sqrt(draws$innov_var)}: the estimated increment SD
+for \code{"gaussian"} innovations, the marginal SD for \code{"t"} and
+\code{"mixture"}, and the root of the series-average variance for \code{"sv"}.}
+\item{\code{t_df}}{\code{draws$nu}, the Student-t degrees of freedom.}
+\item{\code{sv_mu}, \code{sv_phi}, \code{sv_sigma}}{\code{draws$sv_mu}, \code{draws$sv_phi} and
+\code{draws$sv_sigma}, the parameters of the AR(1) log-variance process.}
+\item{\code{ar1_rho}}{\code{draws$rho}, the AR(1) coefficient.}
+\item{\code{drift_mu} / \code{intercept_mu}}{\code{draws$mu}, the random-walk drift or
+the AR(1) intercept.}
+\item{\code{gate_open_prob}}{\code{draws$pi_open}, the probability that the
+zero-inflation gate is open (one minus the structural-zero
+probability).}
+}
+Rows are included only where relevant. For \code{"mixture"} innovations only
+\code{innov_sd} is reported. The mixture components are exchangeable and not
+identified individually, so per-component summaries are not given. The
+draws of the weights and component variances are in \code{draws$mix_weight}
+and \code{draws$mix_var}. For the multinomial family every
+latent parameter is reported once per non-baseline category, with the
+category label in square brackets (e.g. \code{innov_sd[B]}), and the fitted
+summary is a long data frame with a \code{category} column covering all \code{K}
+categories.
 }
 \description{
 Summarise a fitted dynamic model
 }
 \examples{
 sim <- simulate_dynamic_poisson(50, 0.2, 2, seed = 1)
-fit <- fit_dynamic_model(sim$y, nsave = 200, nburn = 100)
+fit <- fit_dynamic_model(sim$y, nsave = 200, nburn = 100, seed = 1)
 summary(fit)
 }

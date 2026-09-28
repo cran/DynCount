@@ -57,10 +57,14 @@ test_that("arbitrary forecast horizons work and expose the final step", {
   }
 })
 
-test_that("forecast errors when the model was fitted without a horizon", {
+test_that("forecast needs a horizon when none is stored, and works post hoc", {
   sim <- simulate_dynamic_poisson(n = 60, sigma = 0.2, log_rate0 = 2, seed = 5)
   fit <- fit_dynamic_model(sim$y, nsave = 225, nburn = 112, seed = 5)  # horizon = 0
   expect_error(forecast(fit), "horizon")
+  fc <- forecast(fit, horizon = 5, seed = 1)
+  expect_equal(fc$horizon, 5)
+  expect_equal(dim(fc$draws), c(225, 5))
+  expect_equal(dim(fc$latent_draws), c(225, 5))
 })
 
 test_that("AR(1) forecasts use rho in the propagation", {

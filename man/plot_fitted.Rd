@@ -4,24 +4,31 @@
 \alias{plot_fitted}
 \title{Plot observed versus fitted values}
 \usage{
-plot_fitted(object, level = 0.95, ...)
+plot_fitted(object, level = 0.95, category = NULL, ...)
 }
 \arguments{
 \item{object}{A \code{"dynamic_fit"} object.}
 
 \item{level}{Credible level. Default \code{0.95}.}
 
-\item{...}{Passed to \code{\link[graphics:plot.default]{graphics::plot()}}.}
+\item{category}{Multinomial family only: which categories to draw (names
+or indices among the non-baseline categories for \code{\link[=plot_latent]{plot_latent()}}; among
+all \code{K} categories for \code{\link[=plot_fitted]{plot_fitted()}} and \code{\link[=plot_forecast]{plot_forecast()}}). \code{NULL}
+(default) draws one panel per category.}
+
+\item{...}{Passed to \code{\link[graphics:plot.default]{graphics::plot()}}; may override the default \code{main},
+\code{xlab}, \code{ylab}, \code{ylim} and other plot arguments.}
 }
 \value{
 Invisibly, the fitted summary.
 }
 \description{
 Observed series with the posterior median fitted mean and a credible band on
-the response scale.
+the response scale. For the multinomial family, one panel per category
+showing the observed and expected counts \eqn{N_t p_{t,k}}.
 }
 \examples{
 sim <- simulate_dynamic_poisson(60, 0.2, 2, seed = 1)
-fit <- fit_dynamic_model(sim$y, nsave = 300, nburn = 200)
+fit <- fit_dynamic_model(sim$y, nsave = 300, nburn = 200, seed = 1)
 plot_fitted(fit)
 }

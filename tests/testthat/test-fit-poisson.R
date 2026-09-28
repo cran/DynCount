@@ -9,8 +9,12 @@ test_that("fit_dynamic_model returns a dynamic_fit with the expected structure",
   expect_equal(fit$data$n, 60)
   # posterior draw matrices have the requested number of rows
   expect_equal(nrow(fit$draws$z), 300)
-  # latent state vector is the leading pad + n observations (n + 1 columns)
-  expect_equal(ncol(fit$draws$z), 61)
+  # latent states are aligned with the observations; the initial state is z0
+  expect_equal(ncol(fit$draws$z), 60)
+  expect_equal(ncol(fit$draws$sig2), 60)
+  expect_length(fit$draws$z0, 300)
+  # placeholders for inapplicable components are NULL
+  expect_null(fit$draws$gate); expect_null(fit$draws$pi_open); expect_null(fit$draws$nu)
   expect_equal(ncol(fit$draws$fitted), 60)
   # draws holds only posterior draws -- fixed inputs live elsewhere
   expect_null(fit$draws$offset)
@@ -42,7 +46,8 @@ test_that("the t innovation samples degrees of freedom", {
   fit <- fit_dynamic_model(sim$y, family = "poisson", innovations = "t",
                            nsave = 300, nburn = 150, seed = 6)
   expect_true(!is.null(fit$draws$nu))
-  expect_true(all(fit$draws$nu > 0))
+  expect_true(all(fit$draws$nu >= fit$spec$prior$df_min))
+  expect_true(length(unique(fit$draws$nu)) > 10)   # the collapsed MH step moves
 })
 
 test_that("invalid count input is rejected", {
